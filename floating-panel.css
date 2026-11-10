@@ -19,11 +19,11 @@
   overflow: hidden;
 }
 
-.twocanplay-ai-panel.minimized .panel-content {
+.twocanplay-ai-panel.minimized .tcp-panel-content {
   display: none;
 }
 
-.panel-header {
+.tcp-panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -33,7 +33,7 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.panel-title {
+.tcp-panel-title {
   font-weight: 600;
   font-size: 14px;
   display: flex;
@@ -41,7 +41,7 @@
   gap: 6px;
 }
 
-.panel-minimize {
+.tcp-panel-minimize {
   background: rgba(255, 255, 255, 0.2);
   border: none;
   color: white;
@@ -54,11 +54,11 @@
   transition: background 0.2s;
 }
 
-.panel-minimize:hover {
+.tcp-panel-minimize:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 
-.panel-content {
+.tcp-panel-content {
   padding: 16px;
   background: white;
   color: #333;
@@ -67,17 +67,17 @@
   overflow-y: auto;
 }
 
-.status {
+.tcp-status {
   text-align: center;
   padding: 20px;
   font-size: 14px;
 }
 
-.status.processing {
+.tcp-status.processing {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-.status.error {
+.tcp-status.error {
   color: #e53e3e;
 }
 
@@ -86,7 +86,7 @@
   50% { opacity: 0.6; }
 }
 
-.question-info {
+.tcp-q-info {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
@@ -94,7 +94,7 @@
   align-items: center;
 }
 
-.question-number {
+.tcp-q-number {
   background: #667eea;
   color: white;
   padding: 4px 10px;
@@ -103,7 +103,7 @@
   font-weight: 600;
 }
 
-.category {
+.tcp-category {
   background: #f7fafc;
   color: #4a5568;
   padding: 4px 10px;
@@ -112,7 +112,7 @@
   font-weight: 500;
 }
 
-.verified-badge {
+.tcp-verified-badge {
   background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
   color: white;
   padding: 4px 10px;
@@ -124,7 +124,7 @@
   box-shadow: 0 2px 4px rgba(56, 161, 105, 0.3);
 }
 
-.unverified-badge {
+.tcp-unverified-badge {
   background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
   color: white;
   padding: 4px 10px;
@@ -136,7 +136,7 @@
   box-shadow: 0 2px 4px rgba(237, 137, 54, 0.3);
 }
 
-.cache-badge {
+.tcp-cache-badge {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -145,7 +145,7 @@
   font-weight: 600;
 }
 
-.warning {
+.tcp-warning {
   margin-top: 8px;
   padding: 8px;
   background: #fff5f5;
@@ -156,7 +156,7 @@
   line-height: 1.4;
 }
 
-.question-text {
+.tcp-q-display-text {
   font-size: 13px;
   color: #2d3748;
   margin-bottom: 12px;
@@ -164,48 +164,48 @@
   font-weight: 500;
 }
 
-.answer-section {
+.tcp-answer-section {
   background: #f7fafc;
   padding: 12px;
   border-radius: 8px;
   margin-bottom: 12px;
 }
 
-.suggested-answer {
+.tcp-suggested-answer {
   font-size: 14px;
   color: #1a202c;
   margin-bottom: 8px;
   line-height: 1.5;
 }
 
-.suggested-answer strong {
+.tcp-suggested-answer strong {
   color: #667eea;
   display: block;
   margin-bottom: 4px;
 }
 
-.confidence {
+.tcp-confidence {
   font-size: 12px;
   color: #718096;
   margin-bottom: 8px;
 }
 
-.confidence-high {
+.tcp-confidence-high {
   color: #38a169;
   font-weight: 600;
 }
 
-.confidence-medium {
+.tcp-confidence-medium {
   color: #d69e2e;
   font-weight: 600;
 }
 
-.confidence-low {
+.tcp-confidence-low {
   color: #e53e3e;
   font-weight: 600;
 }
 
-.explanation {
+.tcp-explanation {
   font-size: 12px;
   color: #4a5568;
   line-height: 1.4;
@@ -215,7 +215,7 @@
   font-style: italic;
 }
 
-.meta {
+.tcp-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -225,33 +225,33 @@
   flex-wrap: wrap;
 }
 
-.processing-time,
-.countdown {
+.tcp-processing-time,
+.tcp-countdown {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.countdown {
+.tcp-countdown {
   color: #e53e3e;
   font-weight: 600;
 }
 
 /* Scrollbar styling */
-.panel-content::-webkit-scrollbar {
+.tcp-panel-content::-webkit-scrollbar {
   width: 6px;
 }
 
-.panel-content::-webkit-scrollbar-track {
+.tcp-panel-content::-webkit-scrollbar-track {
   background: #f1f1f1;
   border-radius: 0 0 12px 0;
 }
 
-.panel-content::-webkit-scrollbar-thumb {
+.tcp-panel-content::-webkit-scrollbar-thumb {
   background: #cbd5e0;
   border-radius: 3px;
 }
 
-.panel-content::-webkit-scrollbar-thumb:hover {
+.tcp-panel-content::-webkit-scrollbar-thumb:hover {
   background: #a0aec0;
 }

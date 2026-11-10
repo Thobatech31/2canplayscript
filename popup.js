@@ -29,15 +29,23 @@ async function loadSettings() {
     
     document.getElementById('enabledToggle').checked = settings.enabled !== false;
     document.getElementById('apiKey').value = settings.apiKey || '';
-    document.getElementById('aiProvider').value = settings.aiProvider || 'gemini';
-    document.getElementById('modelSelect').value = settings.model || 'gemini-pro';
-    document.getElementById('verificationMode').value = settings.verificationMode || 'strict';
+    
+    const provider = settings.aiProvider || 'openai';
+    document.getElementById('aiProvider').value = provider;
+    
+    // 1. FIRST update provider UI so the model options exist in the select!
+    updateProviderUI(provider);
+    
+    // 2. NOW set the saved model value on the populated select!
+    if (settings.model) {
+      document.getElementById('modelSelect').value = settings.model;
+    }
+    
+    document.getElementById('verificationMode').value = settings.verificationMode || 'balanced';
     document.getElementById('showConfidence').checked = settings.showConfidence !== false;
     document.getElementById('showExplanation').checked = settings.showExplanation !== false;
     document.getElementById('useVerification').checked = settings.useVerification !== false;
-    
-    // Update UI based on provider
-    updateProviderUI(settings.aiProvider || 'gemini');
+    document.getElementById('autoClick').checked = settings.autoClick === true;
   }
 }
 
@@ -87,6 +95,7 @@ async function saveSettings() {
     useVerification: document.getElementById('useVerification').checked,
     showConfidence: document.getElementById('showConfidence').checked,
     showExplanation: document.getElementById('showExplanation').checked,
+    autoClick: document.getElementById('autoClick').checked,
     panelPosition: 'top-right',
     timeout: 8000
   };
@@ -106,17 +115,15 @@ async function saveSettings() {
   }
   
   if (aiProvider === 'gemini') {
-    // Gemini keys can start with AIza or other prefixes (more flexible)
     if (apiKey.length < 20) {
       showSaveStatus('⚠️ API key seems too short. Please check your key.', 'error');
       return;
     }
   }
   
-  // Warn about verification mode
   if (settings.verificationMode === 'strict') {
     const providerName = aiProvider === 'gemini' ? 'Gemini (FREE!)' : 'OpenAI';
-    showSaveStatus(`Strict mode enabled with ${providerName} - expect 4-6s response time`, 'success');
+    showSaveStatus(`Strict mode enabled with ${providerName} - expect 3-4s response time`, 'success');
   } else if (settings.verificationMode === 'fast') {
     showSaveStatus('⚠️ Fast mode: Lower accuracy. Consider Strict or Balanced for critical games.', 'success');
   }
@@ -127,6 +134,12 @@ async function saveSettings() {
   });
   
   if (response.success) {
+    // Notify active tabs about settings change
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, { action: 'settingsUpdated', settings });
+    }
+
     setTimeout(() => {
       showSaveStatus('Settings saved successfully!', 'success');
       updateStatus();

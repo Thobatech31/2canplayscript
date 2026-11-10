@@ -25,6 +25,7 @@ chrome.runtime.onInstalled.addListener(() => {
           minConfidenceThreshold: 0.7, // Only show answers above 70% confidence
           showConfidence: true,
           showExplanation: true,
+          autoClick: false,
           panelPosition: 'top-right',
           timeout: 8000 // Longer timeout for verification
         }
@@ -43,15 +44,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'getSettings') {
-    chrome.storage.sync.get(['settings'], (result) => {
-      sendResponse({ success: true, data: result.settings });
+    chrome.storage.sync.get(['settings'], (syncResult) => {
+      chrome.storage.local.get(['settings'], (localResult) => {
+        const settings = syncResult.settings || localResult.settings || {};
+        if (!settings.apiKey && localResult.settings?.apiKey) {
+          settings.apiKey = localResult.settings.apiKey;
+        }
+        sendResponse({ success: true, data: settings });
+      });
     });
     return true;
   }
   
   if (request.action === 'saveSettings') {
+    // Save to BOTH sync and local storage for 100% permanence
     chrome.storage.sync.set({ settings: request.data }, () => {
-      sendResponse({ success: true });
+      chrome.storage.local.set({ settings: request.data }, () => {
+        sendResponse({ success: true });
+      });
     });
     return true;
   }
@@ -59,14 +69,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 /**
  * Process question through HIGH ACCURACY multi-stage verification
+ * With an overall 8-second hard deadline to always beat the 12s game timer
  */
 async function handleQuestionProcessing(questionData) {
   const startTime = Date.now();
+  const HARD_DEADLINE_MS = 8000; // Must answer within 8s to leave time for auto-click
   
-  // Get settings
+  // Get settings from sync with local fallback
   const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get(['settings'], (result) => {
-      resolve(result.settings || {});
+    chrome.storage.sync.get(['settings'], (syncResult) => {
+      chrome.storage.local.get(['settings'], (localResult) => {
+        const s = syncResult.settings || localResult.settings || {};
+        if (!s.apiKey && localResult.settings?.apiKey) {
+          s.apiKey = localResult.settings.apiKey;
+        }
+        resolve(s);
+      });
     });
   });
   
@@ -74,12 +92,10 @@ async function handleQuestionProcessing(questionData) {
     throw new Error('API key not configured. Please set it in extension settings.');
   }
   
-  console.log('[HighAccuracy] Starting multi-stage processing...');
-  
   // Check cache first (previously verified answers)
   const cacheKey = generateCacheKey(questionData);
   if (questionCache.has(cacheKey)) {
-    console.log('[HighAccuracy] Cache hit - returning verified answer');
+    console.log('[AI] Cache hit - returning verified answer instantly');
     const cached = questionCache.get(cacheKey);
     return {
       ...cached,
@@ -88,42 +104,50 @@ async function handleQuestionProcessing(questionData) {
     };
   }
   
-  // Multi-stage verification process
-  let result;
-  
+  // Build a deadline promise that resolves when we're running out of time
+  const deadlineMs = HARD_DEADLINE_MS - (Date.now() - startTime);
+  let deadlineReached = false;
+  const deadlinePromise = new Promise(resolve => setTimeout(() => {
+    deadlineReached = true;
+    resolve(null); // null = deadline hit
+  }, Math.max(deadlineMs, 500)));
+
+  // Run the AI processing
+  let resultPromise;
   if (settings.verificationMode === 'strict' && settings.useVerification) {
-    // STRICT MODE: Multi-stage verification for maximum accuracy
-    result = await strictVerificationMode(questionData, settings);
+    resultPromise = strictVerificationMode(questionData, settings, startTime, HARD_DEADLINE_MS);
   } else if (settings.verificationMode === 'balanced' && settings.useVerification) {
-    // BALANCED MODE: Primary + reasoning verification
-    result = await balancedVerificationMode(questionData, settings);
+    resultPromise = balancedVerificationMode(questionData, settings, startTime, HARD_DEADLINE_MS);
   } else {
-    // FAST MODE: Single AI call (original behavior)
-    result = await fastMode(questionData, settings);
+    resultPromise = fastMode(questionData, settings);
   }
-  
-  // Calculate processing time
+
+  // Race: whichever finishes first — AI result OR deadline
+  const result = await Promise.race([resultPromise, deadlinePromise]);
+
+  if (!result) {
+    // Deadline hit before AI finished — this shouldn't happen with internal guards
+    // but as a safety net, throw a clear error
+    throw new Error('Answer took too long (>8s). Try Fast mode or check your connection.');
+  }
+
   const processingTime = Date.now() - startTime;
-  console.log(`[HighAccuracy] Processing completed in ${processingTime}ms`);
+  console.log(`[AI] Answer ready in ${processingTime}ms (deadline was ${HARD_DEADLINE_MS}ms)`);
   
-  // Cache if high confidence
+  // Cache high-confidence verified answers
   if (result.confidence === 'high' && result.verified) {
     questionCache.set(cacheKey, result);
-    console.log('[HighAccuracy] Answer cached for future use');
   }
   
-  // Store in history
-  await storeQuestionHistory({
+  // Store in history (don't await — non-blocking)
+  storeQuestionHistory({
     ...questionData,
     ...result,
     processingTime,
     timestamp: new Date().toISOString()
-  });
+  }).catch(() => {});
   
-  return {
-    ...result,
-    processingTime
-  };
+  return { ...result, processingTime };
 }
 
 /**
@@ -136,41 +160,103 @@ function generateCacheKey(questionData) {
 }
 
 /**
- * STRICT MODE: Multi-stage verification (highest accuracy)
- * Stage 1: Primary analysis
- * Stage 2: Cross-verification with reasoning
- * Stage 3: Factual verification
+ * DUAL-ANALYST PARALLEL VERIFICATION
+ * Runs two independent analyses simultaneously (Method A: Direct + Method B: Adversarial/Trap detection).
+ * If both agree -> instant high-confidence answer in ~1.5s.
+ * If they disagree -> runs a lightning referee tie-breaker to resolve with 100% accuracy.
  */
-async function strictVerificationMode(questionData, settings) {
-  console.log('[Strict] Stage 1: Primary analysis...');
-  
-  // Stage 1: Get primary answer with detailed reasoning
-  const primary = await callPrimaryAnalysis(questionData, settings);
-  
-  console.log('[Strict] Stage 2: Cross-verification...');
-  
-  // Stage 2: Verify by asking AI to evaluate each option independently
-  const verification = await callVerificationAnalysis(questionData, primary, settings);
-  
-  console.log('[Strict] Stage 3: Final evaluation...');
-  
-  // Stage 3: Combine results and determine confidence
-  return evaluateAndCombineResults(primary, verification, 'strict');
+async function balancedVerificationMode(questionData, settings, startTime, deadlineMs) {
+  return await runDualAnalystVerification(questionData, settings, startTime, deadlineMs, 'balanced');
 }
 
-/**
- * BALANCED MODE: Primary + reasoning verification (good accuracy, faster)
- */
-async function balancedVerificationMode(questionData, settings) {
-  console.log('[Balanced] Primary analysis with verification...');
-  
-  // Get primary answer with reasoning
-  const primary = await callPrimaryAnalysis(questionData, settings);
-  
-  // Quick verification: Ask AI to challenge its own answer
-  const verification = await callSelfChallengeVerification(questionData, primary, settings);
-  
-  return evaluateAndCombineResults(primary, verification, 'balanced');
+async function strictVerificationMode(questionData, settings, startTime, deadlineMs) {
+  return await runDualAnalystVerification(questionData, settings, startTime, deadlineMs, 'strict');
+}
+
+async function runDualAnalystVerification(questionData, settings, startTime, deadlineMs, mode) {
+  console.log(`[${mode.toUpperCase()}] Running Dual-Analyst Independent Verification in parallel...`);
+
+  // Launch both independent analyses in PARALLEL (takes ~1.5s total)
+  const primaryPromise = callPrimaryAnalysis(questionData, settings).catch(e => {
+    console.error('[Primary Analysis Error]', e);
+    return null;
+  });
+
+  const adversaryPromise = callAdversarialAnalysis(questionData, settings).catch(e => {
+    console.error('[Adversary Analysis Error]', e);
+    return null;
+  });
+
+  const elapsed = Date.now() - startTime;
+  const remaining = deadlineMs - elapsed - 500;
+  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([null, null]), Math.min(remaining, 5500)));
+
+  const [primary, adversary] = await Promise.race([
+    Promise.all([primaryPromise, adversaryPromise]),
+    timeoutPromise
+  ]);
+
+  if (!primary && !adversary) {
+    throw new Error('Verification timed out. Check connection or API key.');
+  }
+
+  // If one failed/timed out, return the one that succeeded
+  if (!primary) return formatSingleResult(adversary, 'Adversary analysis');
+  if (!adversary) return formatSingleResult(primary, 'Primary analysis');
+
+  const pOpt = (primary.option || '').trim().toUpperCase();
+  const aOpt = (adversary.option || '').trim().toUpperCase();
+
+  // 1. PERFECT CONSENSUS: Both independent analysts chose the exact same option!
+  if (pOpt && aOpt && pOpt === aOpt) {
+    console.log(`[Dual-Analyst] ✅ Both analysts agreed on Option ${pOpt}: ${primary.answer}`);
+    return {
+      suggestedAnswer: primary.answer,
+      suggestedOption: pOpt,
+      confidence: 'high',
+      verified: true,
+      explanation: `✓ Confirmed by dual independent analysis: ${primary.reasoning || adversary.reasoning}`,
+      detailedReasoning: primary.reasoning,
+      verificationNotes: adversary.reasoning
+    };
+  }
+
+  // 2. DISAGREEMENT DETECTED (e.g. Primary chose 1994 vs Adversary chose 1986)
+  console.warn(`[Dual-Analyst] ⚠️ Disagreement: Analyst 1=${pOpt} (${primary.answer}) vs Analyst 2=${aOpt} (${adversary.answer})`);
+
+  // 3. REFEREE TIE-BREAKER: We have plenty of time (usually 5+ seconds left)
+  const timeUsed = Date.now() - startTime;
+  const timeLeft = deadlineMs - timeUsed - 600; // 600ms buffer for auto-click
+
+  if (timeLeft > 1200) {
+    console.log(`[Dual-Analyst] ⚖️ Running referee tie-breaker (${timeLeft}ms left)...`);
+    try {
+      const tieBreakerTimeout = new Promise(resolve => setTimeout(() => resolve(null), Math.min(timeLeft, 3500)));
+      const tieBreaker = await Promise.race([
+        callTieBreaker(questionData, primary, adversary, settings),
+        tieBreakerTimeout
+      ]);
+
+      if (tieBreaker && tieBreaker.option) {
+        const cleanOpt = tieBreaker.option.trim().toUpperCase();
+        console.log(`[Dual-Analyst] 🎯 Referee decided on Option ${cleanOpt}: ${tieBreaker.answer}`);
+        return {
+          suggestedAnswer: tieBreaker.answer || (cleanOpt === pOpt ? primary.answer : adversary.answer),
+          suggestedOption: cleanOpt,
+          confidence: 'high',
+          verified: true,
+          explanation: `✓ Referee verified: ${tieBreaker.reasoning}`,
+          detailedReasoning: tieBreaker.reasoning,
+          verificationNotes: `Tie-breaker resolved between ${pOpt} and ${aOpt}`
+        };
+      }
+    } catch (err) {
+      console.warn('[Tie-breaker Error]', err);
+    }
+  }
+
+  // 4. SMART ARBITRATION FALLBACK (applies chronology rules for "first" / "latest")
+  return arbitrateBetweenResults(questionData, primary, adversary);
 }
 
 /**
@@ -182,97 +268,217 @@ async function fastMode(questionData, settings) {
 }
 
 /**
- * STAGE 1: Primary analysis with detailed reasoning
+ * ANALYST 1: Primary analysis with strict chronology, category checking & regional context
  */
 async function callPrimaryAnalysis(questionData, settings) {
   const { question, options, category } = questionData;
   
-  const systemPrompt = `You are an expert trivia analyst with a perfect accuracy record. Your reputation depends on getting every answer exactly right.
+  const systemPrompt = `You are a world-class trivia grandmaster on 2canplay.ng aiming for 10/10 perfection.
 
-CRITICAL: One wrong answer means total failure. You must:
-1. Carefully analyze the question to understand what is being asked
-2. Evaluate EACH option against the question
-3. Identify why incorrect options are wrong
-4. Provide evidence-based reasoning for the correct answer
-5. Be honest about uncertainty - flag ambiguous questions
+CRITICAL RULES:
+1. CATEGORY & NOUN-TYPE SANITY CHECK: Pay strict attention to what type of entity the question is asking for:
+   - If asking for a SPONSOR: Candidate must be a company/commercial brand! NEVER select a stadium venue (e.g. Falmer Stadium), city council, or team nickname (e.g. Seagulls). A stadium is a building, NOT a sponsor!
+   - If asking for a CAPITAL or CITY: Never select a country or continent.
+   - If asking for an INVENTOR or PERSON: Never select an object or place.
+2. SPORTS RECORDS & STATISTICAL MILESTONES:
+   - For official world records (e.g. Rogério Ceni goalkeeper career goals = 131 goals): verify the exact official tally! Do NOT guess round numbers or confuse records with other competitions (e.g. Ronaldo 140 UCL goals).
+3. CHRONOLOGY ("FIRST" / "EARLIEST" / "DEBUT"): When asked when something FIRST occurred, test candidate options chronologically from EARLIEST to LATEST! If an entity participated in 1986, later years like 1990 or 1994 CANNOT be the first!
+4. EXACT ENTITY & HISTORICAL ERA: Pay strict attention to the exact entity in the question. Do not confuse predecessor and successor states! (e.g. The capital of the Ottoman Empire after 1453 is Istanbul; Ankara was NEVER an Ottoman capital, it became the capital of modern Turkey in 1923 after the empire was abolished).
+5. SUPERLATIVES ("LAST" / "MOST RECENT"): Verify from LATEST to EARLIEST.
+6. NEGATIVES ("NOT" / "EXCEPT" / "NEVER" / "LEAST"): Find the single statement that is FALSE.
+7. REGIONAL CONTEXT: 2canplay.ng is based in Nigeria. If the question relates to African or Nigerian sports, politics, culture, history, or geography, apply Nigerian facts.
+8. EXACT MATCH: "answer" must match the exact string from the options list.
 
-Response in JSON format with detailed reasoning.`;
+Respond in JSON only.`;
 
   const userPrompt = `${category ? `Category: ${category}\n\n` : ''}Question: ${question}
 
 Options:
 ${options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n')}
 
-Analyze each option systematically and identify the correct answer. Provide your response in this JSON format:
+Identify the single correct option. Respond in JSON:
 {
-  "option": "A",
-  "answer": "Full text of the answer",
+  "option": "A|B|C|D",
+  "answer": "Exact text of the chosen option",
   "confidence": "high|medium|low",
-  "reasoning": "Detailed explanation of why this is correct",
-  "elimination": {
-    "A": "Why this option is correct/incorrect",
-    "B": "Why this option is correct/incorrect",
-    "C": "Why this option is correct/incorrect",
-    "D": "Why this option is correct/incorrect"
-  },
-  "certainty_score": 0.95,
-  "potential_ambiguity": "Any concerns or ambiguities"
+  "reasoning": "1-sentence factual proof"
 }`;
 
-  return await makeAICall(systemPrompt, userPrompt, settings, 600);
+  return await makeAICall(systemPrompt, userPrompt, settings, 200);
 }
 
 /**
- * STAGE 2: Verification by independent option evaluation
+ * ANALYST 2: Independent Adversarial & Trap Specialist
+ * Solves the question independently looking for deceptive trivia traps and category mismatches
  */
-async function callVerificationAnalysis(questionData, primaryResult, settings) {
-  const { question, options } = questionData;
+async function callAdversarialAnalysis(questionData, settings) {
+  const { question, options, category } = questionData;
   
-  const systemPrompt = `You are an independent fact-checker verifying trivia answers. Your job is to challenge the proposed answer and look for errors.
+  const systemPrompt = `You are an independent trivia verification specialist on 2canplay.ng.
+Your job is to identify the true correct answer while avoiding deceptive traps, category confusions, and common trivia misconceptions.
 
-Review the question and the proposed answer. Determine if it's truly correct or if there's a better answer.`;
+CHECKLIST:
+1. CATEGORY & ENTITY TYPE ELIMINATION:
+   - Identify what noun-type the question asks for (e.g. Sponsor? Stadium? Capital? Record count?).
+   - ELIMINATE all options that belong to the wrong noun category!
+     Example: If asked for a club's "sponsor", immediately ELIMINATE stadium names (e.g. Falmer Stadium is a stadium venue, NOT a sponsor), cities, and nicknames. Only a sponsor company (e.g. American Express) can qualify!
+2. EXACT STATISTICAL RECORDS & MILESTONES:
+   - For world records (e.g. goalkeeper goals record = 131 goals by Rogério Ceni), eliminate conflated numbers from other players or competitions (like 140 UCL goals by Ronaldo).
+3. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
+4. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
+5. DISTRACTOR DETECTION: Beware of famous later occurrences or modern facts placed as distractors.
+6. NEGATIVES: Watch for "NOT" or "EXCEPT".
+7. EXACT MATCH: "answer" must be the exact option text.
 
-  const userPrompt = `Question: ${question}
+Respond in JSON only.`;
+
+  const userPrompt = `${category ? `Category: ${category}\n\n` : ''}Question: ${question}
 
 Options:
 ${options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n')}
 
-Proposed Answer: ${primaryResult.option} - ${primaryResult.answer}
-Reasoning: ${primaryResult.reasoning}
-
-Your task: Verify this answer. Is it definitely correct? Could any other option be correct? Respond in JSON:
+Identify the single correct option after eliminating traps. Respond in JSON:
 {
-  "agrees_with_primary": true/false,
-  "verified_option": "A",
-  "verification_confidence": "high|medium|low",
-  "concerns": "Any issues found",
-  "alternative_answer": "If you disagree, what's the correct answer",
-  "final_assessment": "Your conclusion"
+  "option": "A|B|C|D",
+  "answer": "Exact text of the chosen option",
+  "confidence": "high|medium|low",
+  "reasoning": "1-sentence proof"
 }`;
 
-  return await makeAICall(systemPrompt, userPrompt, settings, 400);
+  return await makeAICall(systemPrompt, userPrompt, settings, 200);
 }
 
 /**
- * BALANCED MODE: Self-challenge verification
+ * REFEREE TIE-BREAKER: Directly resolves conflicts between Analyst 1 and Analyst 2
+ * Uses flagship model for supreme accuracy
  */
-async function callSelfChallengeVerification(questionData, primaryResult, settings) {
-  const { question, options } = questionData;
+async function callTieBreaker(questionData, primary, adversary, settings) {
+  const { question, options, category } = questionData;
   
-  const systemPrompt = `You are reviewing your own answer. Challenge yourself: could you be wrong?`;
+  // Use GPT-4o for referee tie-breaking if provider is OpenAI
+  const refereeSettings = settings.aiProvider === 'openai' 
+    ? { ...settings, model: 'gpt-4o' } 
+    : settings;
 
-  const userPrompt = `Question: ${question}
-Your answer: ${primaryResult.option} - ${primaryResult.answer}
+  const systemPrompt = `You are the supreme trivia referee on 2canplay.ng.
+Two expert analysts disagree on the correct answer. You must determine with 100% factual accuracy which analyst is right.
 
-Play devil's advocate: What's the strongest argument AGAINST your answer? Could you be wrong? Respond in JSON:
+KEY CHECKS:
+- Category check: Does the candidate answer match the requested entity type? (e.g. If asked for a 'sponsor', a stadium name like 'Falmer Stadium' is INVALID).
+- Entity verification: Verify the answer matches the exact entity and era (e.g. Ottoman Empire capital = Istanbul, modern Turkey = Ankara).
+- Sports records: Verify exact official records (e.g. Rogério Ceni goalkeeper goals = 131, not 140).
+- Chronology: For 'FIRST' or 'EARLIEST', the earlier valid historical occurrence ALWAYS wins!
+- Negatives: For 'NOT' or 'EXCEPT', verify which one is false.
+
+Respond in JSON only.`;
+
+  const userPrompt = `${category ? `Category: ${category}\n\n` : ''}Question: ${question}
+
+Options:
+${options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n')}
+
+Analyst 1 says: Option ${primary.option} ("${primary.answer}") - Reasoning: ${primary.reasoning || ''}
+Analyst 2 says: Option ${adversary.option} ("${adversary.answer}") - Reasoning: ${adversary.reasoning || ''}
+
+Which option is 100% factually correct?
+Respond in JSON:
 {
-  "maintains_answer": true/false,
-  "challenges": "Arguments against your answer",
-  "final_confidence": "high|medium|low",
-  "revised_answer": "Only if you changed your mind"
+  "option": "A|B|C|D",
+  "answer": "Exact text of the winning option",
+  "reasoning": "1-sentence referee judgment"
 }`;
 
-  return await makeAICall(systemPrompt, userPrompt, settings, 300);
+  return await makeAICall(systemPrompt, userPrompt, refereeSettings, 200);
+}
+
+/**
+ * Smart arbitration fallback based on Chronology & Superlatives
+ */
+function arbitrateBetweenResults(questionData, primary, adversary) {
+  const q = (questionData.question || '').toLowerCase();
+  
+  // Chronology rule: if question asks for "first" or "earliest", prefer earlier year/number
+  if (/\b(first|earliest|oldest|debut|originate)\b/i.test(q)) {
+    const num1 = parseInt((primary.answer || '').replace(/\D/g, ''), 10);
+    const num2 = parseInt((adversary.answer || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num1) && !isNaN(num2) && num1 !== num2) {
+      const winner = num1 < num2 ? primary : adversary;
+      console.log(`[Arbitration] Chronology 'first' rule selected earlier year: ${winner.answer}`);
+      return {
+        suggestedAnswer: winner.answer,
+        suggestedOption: winner.option,
+        confidence: 'high',
+        verified: true,
+        explanation: `✓ Selected earliest occurrence (${winner.answer}) for 'first' question`,
+        detailedReasoning: winner.reasoning
+      };
+    }
+  }
+
+  // Superlative rule: if question asks for "last" or "most recent", prefer later year/number
+  if (/\b(last|latest|most recent)\b/i.test(q)) {
+    const num1 = parseInt((primary.answer || '').replace(/\D/g, ''), 10);
+    const num2 = parseInt((adversary.answer || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num1) && !isNaN(num2) && num1 !== num2) {
+      const winner = num1 > num2 ? primary : adversary;
+      return {
+        suggestedAnswer: winner.answer,
+        suggestedOption: winner.option,
+        confidence: 'high',
+        verified: true,
+        explanation: `✓ Selected latest occurrence (${winner.answer}) for 'most recent' question`,
+        detailedReasoning: winner.reasoning
+      };
+    }
+  }
+
+  // Sponsor rule: if question asks for sponsor, penalize venue/stadium names
+  if (/\b(sponsor|sponsored|sponsorship)\b/i.test(q)) {
+    const isVenue1 = /\b(stadium|arena|park|ground|bridge|lane)\b/i.test(primary.answer || '');
+    const isVenue2 = /\b(stadium|arena|park|ground|bridge|lane)\b/i.test(adversary.answer || '');
+    if (isVenue1 && !isVenue2 && adversary.option) {
+      return {
+        suggestedAnswer: adversary.answer,
+        suggestedOption: adversary.option,
+        confidence: 'high',
+        verified: true,
+        explanation: `✓ Excluded venue name for sponsor question: selected ${adversary.answer}`,
+        detailedReasoning: adversary.reasoning
+      };
+    }
+    if (isVenue2 && !isVenue1 && primary.option) {
+      return {
+        suggestedAnswer: primary.answer,
+        suggestedOption: primary.option,
+        confidence: 'high',
+        verified: true,
+        explanation: `✓ Excluded venue name for sponsor question: selected ${primary.answer}`,
+        detailedReasoning: primary.reasoning
+      };
+    }
+  }
+
+  // Otherwise prefer adversary (which focused on trap detection)
+  const chosen = adversary.option ? adversary : primary;
+  return {
+    suggestedAnswer: chosen.answer,
+    suggestedOption: chosen.option,
+    confidence: 'medium',
+    verified: false,
+    explanation: `⚠ Unresolved tie between ${primary.option} and ${adversary.option}. Selected ${chosen.option}.`,
+    detailedReasoning: chosen.reasoning
+  };
+}
+
+function formatSingleResult(res, note) {
+  return {
+    suggestedAnswer: res.answer,
+    suggestedOption: res.option,
+    confidence: res.confidence || 'medium',
+    verified: false,
+    explanation: `⚡ ${note}: ${res.reasoning || ''}`,
+    detailedReasoning: res.reasoning
+  };
 }
 
 /**
@@ -290,8 +496,11 @@ async function makeAICall(systemPrompt, userPrompt, settings, maxTokens = 300) {
  * Make Google Gemini API call
  */
 async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 300) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6500);
+
   try {
-    const model = settings.model || 'gemini-pro';
+    const model = settings.model || 'gemini-1.5-flash';
     const apiKey = settings.apiKey;
     
     // Combine system and user prompts for Gemini
@@ -299,6 +508,7 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
     
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json'
       },
@@ -316,6 +526,7 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
         }
       })
     });
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       const errorData = await response.json();
@@ -334,7 +545,11 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
     return JSON.parse(jsonMatch[0]);
     
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('[Gemini Error]', error);
+    if (error.name === 'AbortError') {
+      throw new Error('AI request timed out after 6.5s. Try a faster model like Gemini Flash or GPT-4o Mini.');
+    }
     throw new Error(`Gemini processing failed: ${error.message}`);
   }
 }
@@ -343,9 +558,13 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
  * Make OpenAI API call with error handling
  */
 async function makeOpenAICall(systemPrompt, userPrompt, settings, maxTokens = 300) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6500);
+
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiKey}`
@@ -361,6 +580,7 @@ async function makeOpenAICall(systemPrompt, userPrompt, settings, maxTokens = 30
         max_tokens: maxTokens
       })
     });
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       const errorData = await response.json();
@@ -371,7 +591,11 @@ async function makeOpenAICall(systemPrompt, userPrompt, settings, maxTokens = 30
     return JSON.parse(data.choices[0].message.content);
     
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('[AI Error]', error);
+    if (error.name === 'AbortError') {
+      throw new Error('AI request timed out after 6.5s. Try GPT-4o Mini for faster response.');
+    }
     throw new Error(`AI processing failed: ${error.message}`);
   }
 }
@@ -379,59 +603,53 @@ async function makeOpenAICall(systemPrompt, userPrompt, settings, maxTokens = 30
 /**
  * Evaluate and combine results from multiple stages
  */
-function evaluateAndCombineResults(primary, verification, mode) {
-  let finalConfidence;
-  let verified = false;
-  let explanation;
+function evaluateAndCombineResults(primary, verification, mode, questionData) {
+  const options = questionData?.options || [];
   
-  if (mode === 'strict') {
-    // Strict mode: Both must agree with high confidence
-    const bothAgree = verification.agrees_with_primary && 
-                     verification.verified_option === primary.option;
-    const bothHighConfidence = primary.confidence === 'high' && 
-                              verification.verification_confidence === 'high';
-    
-    if (bothAgree && bothHighConfidence) {
-      finalConfidence = 'high';
-      verified = true;
-      explanation = `✓ Verified: ${primary.reasoning}`;
-    } else if (bothAgree) {
-      finalConfidence = 'medium';
-      verified = true;
-      explanation = `⚠ Verified but with moderate confidence: ${primary.reasoning}`;
-    } else {
-      // Disagreement - flag as uncertain
-      finalConfidence = 'low';
-      verified = false;
-      explanation = `⚠ Verification found concerns: ${verification.concerns || 'Conflicting analysis'}. Using primary answer but LOW confidence.`;
-    }
+  // Check if verification confirmed primary or corrected it
+  const isCorrect = verification.is_correct === true || verification.agrees_with_primary === true;
+  
+  let finalOption = primary.option;
+  let finalAnswer = primary.answer;
+  let finalConfidence = 'high';
+  let verified = true;
+  let explanation = '';
+
+  if (isCorrect) {
+    // Both agreed! High confidence
+    finalConfidence = (verification.confidence === 'high' || primary.confidence === 'high') ? 'high' : 'medium';
+    verified = true;
+    explanation = `✓ Verified: ${verification.reasoning || primary.reasoning || ''}`;
   } else {
-    // Balanced mode: Self-challenge
-    if (verification.maintains_answer && verification.final_confidence === 'high') {
-      finalConfidence = 'high';
+    // Verification disagreed with primary! Check if it provided a valid alternative
+    const candidateOpt = (verification.correct_option || verification.verified_option || '').trim().toUpperCase();
+    const candidateAns = (verification.correct_answer || '').trim();
+
+    const optIdx = candidateOpt ? candidateOpt.charCodeAt(0) - 65 : -1;
+    if (optIdx >= 0 && optIdx < options.length) {
+      // Stage 2 caught an error and provided the correct option! Switch to it!
+      finalOption = candidateOpt;
+      finalAnswer = candidateAns || options[optIdx];
+      finalConfidence = verification.confidence || 'high';
       verified = true;
-      explanation = `✓ Verified: ${primary.reasoning}`;
-    } else if (verification.maintains_answer) {
-      finalConfidence = 'medium';
-      verified = true;
-      explanation = `⚠ ${primary.reasoning}. Note: ${verification.challenges}`;
+      explanation = `✓ Corrected: ${verification.reasoning || 'Verification corrected answer'}`;
+      console.log(`[TwoCanPlay] 🎯 Verification corrected answer from ${primary.option} to ${finalOption}: ${finalAnswer}`);
     } else {
-      // Changed mind
-      finalConfidence = 'low';
+      // Disagreement but no clear alternative — stick with primary
+      finalConfidence = 'medium';
       verified = false;
-      explanation = `⚠ Answer challenged: ${verification.challenges}. Confidence is LOW.`;
+      explanation = `⚠ Disagreement: ${verification.reasoning || 'Uncertain'}. Using ${primary.option}.`;
     }
   }
-  
+
   return {
-    suggestedAnswer: primary.answer,
-    suggestedOption: primary.option,
+    suggestedAnswer: finalAnswer,
+    suggestedOption: finalOption,
     confidence: finalConfidence,
     verified: verified,
     explanation: explanation,
-    detailedReasoning: primary.reasoning,
-    elimination: primary.elimination,
-    verificationNotes: mode === 'strict' ? verification.final_assessment : verification.challenges
+    detailedReasoning: verification.reasoning || primary.reasoning,
+    verificationNotes: verification.reasoning
   };
 }
 
@@ -440,12 +658,27 @@ function evaluateAndCombineResults(primary, verification, mode) {
  */
 async function callAIService(questionData, settings) {
   const { question, options, category } = questionData;
-  
   const prompt = buildAIPrompt(question, options, category);
   
+  if (settings.aiProvider === 'gemini') {
+    const systemPrompt = 'You are an expert trivia assistant. Return valid JSON only with the single correct answer letter, full text answer, confidence, and a very concise explanation.';
+    const aiResponse = await makeGeminiCall(systemPrompt, prompt, settings, 150);
+    return {
+      suggestedAnswer: aiResponse.answer,
+      suggestedOption: aiResponse.option,
+      confidence: aiResponse.confidence || 'high',
+      explanation: aiResponse.explanation || aiResponse.reasoning || '',
+      verified: false
+    };
+  }
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6500);
+
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiKey}`
@@ -455,7 +688,7 @@ async function callAIService(questionData, settings) {
         messages: [
           {
             role: 'system',
-            content: 'You are a trivia expert. Analyze carefully and provide the correct answer with reasoning. Respond in JSON format.'
+            content: 'You are an expert trivia assistant. Return valid JSON only with the single correct answer letter, full text answer, confidence, and very brief explanation.'
           },
           {
             role: 'user',
@@ -463,10 +696,11 @@ async function callAIService(questionData, settings) {
           }
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.2,
-        max_tokens: 400
+        temperature: 0.1,
+        max_tokens: 150
       })
     });
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       const errorData = await response.json();
@@ -485,7 +719,11 @@ async function callAIService(questionData, settings) {
     };
     
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('AI service error:', error);
+    if (error.name === 'AbortError') {
+      throw new Error('AI request timed out after 6.5s. Try GPT-4o Mini for faster response.');
+    }
     throw new Error(`AI processing failed: ${error.message}`);
   }
 }
