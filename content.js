@@ -8,6 +8,7 @@ class TwoCanPlayAssistant {
     this.isEnabled = true;
     this.currentQuestionNumber = null;
     this.lastProcessedQuestion = null;
+    this.lastProcessedTime = null; // Track when last processed
     this.observer = null;
     this.floatingPanel = null;
     this.processingQuestion = false;
@@ -127,11 +128,11 @@ class TwoCanPlayAssistant {
     this.observer = new MutationObserver((mutations) => {
       if (!this.isEnabled || this.processingQuestion) return;
       
-      // Debounce: wait 300ms after last mutation before checking
+      // Reduced debounce for faster detection: 100ms instead of 300ms
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         this.checkForQuestion();
-      }, 300);
+      }, 100); // Faster detection
     });
     
     this.observer.observe(document.body, {
@@ -140,11 +141,11 @@ class TwoCanPlayAssistant {
       characterData: false // Don't watch text changes (performance)
     });
     
-    // Also check periodically (less frequently)
+    // Also check more frequently: every 500ms instead of 2s
     setInterval(() => {
       if (!this.isEnabled || this.processingQuestion) return;
       this.checkForQuestion();
-    }, 2000); // Changed from 1s to 2s
+    }, 500); // Faster polling
   }
   
   checkForQuestion() {
@@ -172,10 +173,15 @@ class TwoCanPlayAssistant {
   }
   
   extractQuestionData() {
+    console.log('[TwoCanPlay] Checking for question...');
+    
     // Optimize: Only check if we're likely on a question page
     if (!document.body.textContent.includes('?')) {
+      console.log('[TwoCanPlay] No question mark found on page');
       return null; // No question mark = probably no question
     }
+    
+    console.log('[TwoCanPlay] Question mark found, extracting data...');
     
     // Try multiple selectors to find question elements
     // These selectors need to be adjusted based on actual 2canplay.ng DOM structure
@@ -184,7 +190,7 @@ class TwoCanPlayAssistant {
       '.question-text',
       '[class*="question"]',
       '[class*="Question"]',
-      'h2', 'h3', 'h4' // Fallback to headings
+      'h1', 'h2', 'h3', 'h4', 'h5', 'p' // Expanded fallback
     ];
     
     const possibleOptionSelectors = [
@@ -192,8 +198,10 @@ class TwoCanPlayAssistant {
       '.answer-option',
       '[class*="option"]',
       '[class*="answer"]',
-      'button[class*="option"]',
-      'div[class*="option"]'
+      '[class*="choice"]',
+      'button',
+      'div[role="button"]',
+      '[class*="btn"]'
     ];
     
     const possibleTimerSelectors = [
@@ -220,27 +228,79 @@ class TwoCanPlayAssistant {
       if (questionText) break;
     }
     
-    if (!questionText) return null;
+    if (!questionText) {
+      console.log('[TwoCanPlay] No question text found');
+      return null;
+    }
     
-    // Find options
+    console.log('[TwoCanPlay] Found question:', questionText.substring(0, 50) + '...');
+    
+    // Find options - be more aggressive
     let options = [];
-    for (const selector of possibleOptionSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length >= 2 && elements.length <= 6) {
-        options = Array.from(elements).map(el => el.textContent?.trim()).filter(Boolean);
-        if (options.length >= 2) break;
+    let foundSelector = null;
+    
+    // First, try to find ALL buttons on the page
+    const allButtons = document.querySelectorAll('button');
+    console.log(`[TwoCanPlay] Found ${allButtons.length} total buttons on page`);
+    
+    // Filter buttons that look like answer options
+    const likelyOptions = Array.from(allButtons).filter(btn => {
+      const text = btn.textContent?.trim();
+      // Answer options are usually short text (not "Play Again", "Go to Homepage", etc.)
+      return text && text.length > 2 && text.length < 200 && 
+             !text.includes('Play') && 
+             !text.includes('Homepage') &&
+             !text.includes('pts');
+    });
+    
+    console.log('[TwoCanPlay] Likely option buttons:', likelyOptions.length);
+    console.log('[TwoCanPlay] Button texts:', likelyOptions.map(b => b.textContent?.trim()));
+    
+    if (likelyOptions.length >= 2 && likelyOptions.length <= 6) {
+      options = likelyOptions.map(el => el.textContent?.trim()).filter(Boolean);
+      console.log('[TwoCanPlay] Using filtered button options:', options);
+    }
+    
+    // If that didn't work, try original selectors
+    if (options.length < 2) {
+      for (const selector of possibleOptionSelectors) {
+        const elements = document.querySelectorAll(selector);
+        console.log(`[TwoCanPlay] Trying selector "${selector}": found ${elements.length} elements`);
+        
+        if (elements.length >= 2 && elements.length <= 10) {
+          const tempOptions = Array.from(elements).map(el => el.textContent?.trim()).filter(Boolean);
+          console.log('[TwoCanPlay] Extracted options:', tempOptions);
+          
+          if (tempOptions.length >= 2 && tempOptions.length <= 6) {
+            options = tempOptions;
+            foundSelector = selector;
+            console.log('[TwoCanPlay] Using selector:', selector);
+            break;
+          }
+        }
       }
     }
     
     if (options.length < 2) {
+      console.log('[TwoCanPlay] Trying to find options near question...');
       // Try to find options near the question
       const parent = questionElement?.parentElement;
       if (parent) {
-        const buttons = parent.querySelectorAll('button, div[role="button"]');
+        const buttons = parent.querySelectorAll('button, div[role="button"], [class*="option"]');
+        console.log('[TwoCanPlay] Found', buttons.length, 'potential option elements near question');
         if (buttons.length >= 2) {
           options = Array.from(buttons).map(el => el.textContent?.trim()).filter(Boolean);
+          console.log('[TwoCanPlay] Extracted near-question options:', options);
         }
       }
+    }
+    
+    // Log all text content for debugging
+    if (options.length < 2) {
+      console.log('[TwoCanPlay] DEBUGGING: All visible text on page:', 
+        document.body.textContent.substring(0, 500));
+      console.log('[TwoCanPlay] DEBUGGING: All buttons:', 
+        Array.from(document.querySelectorAll('button')).map(b => b.textContent?.trim()));
     }
     
     // Extract question number
@@ -292,16 +352,25 @@ class TwoCanPlayAssistant {
   isDuplicateQuestion(questionData) {
     if (!this.lastProcessedQuestion) return false;
     
-    return (
+    // Consider it duplicate only if question text matches AND it was processed within last 5 seconds
+    const timeSinceLastProcess = Date.now() - (this.lastProcessedTime || 0);
+    const isDupe = (
       this.lastProcessedQuestion.question === questionData.question &&
-      JSON.stringify(this.lastProcessedQuestion.options) === JSON.stringify(questionData.options)
+      timeSinceLastProcess < 5000 // 5 seconds
     );
+    
+    if (!isDupe) {
+      this.lastProcessedTime = Date.now();
+    }
+    
+    return isDupe;
   }
   
   async processQuestion(questionData) {
     if (!questionData.options || questionData.options.length < 2) {
-      console.log('Invalid question data - no options found');
-      this.updatePanel('❌ Could not extract answer options', 'error');
+      console.error('[TwoCanPlay] Invalid question data - no options found');
+      console.error('[TwoCanPlay] Question data:', questionData);
+      this.updatePanel('❌ Could not extract answer options<br><small>Check console (F12) for details</small>', 'error');
       return;
     }
     
