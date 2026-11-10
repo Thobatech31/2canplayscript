@@ -282,12 +282,16 @@ CRITICAL RULES:
    - If asking for an INVENTOR or PERSON: Never select an object or place.
 2. SPORTS RECORDS & STATISTICAL MILESTONES:
    - For official world records (e.g. Rogério Ceni goalkeeper career goals = 131 goals): verify the exact official tally! Do NOT guess round numbers or confuse records with other competitions (e.g. Ronaldo 140 UCL goals).
-3. CHRONOLOGY ("FIRST" / "EARLIEST" / "DEBUT"): When asked when something FIRST occurred, test candidate options chronologically from EARLIEST to LATEST! If an entity participated in 1986, later years like 1990 or 1994 CANNOT be the first!
-4. EXACT ENTITY & HISTORICAL ERA: Pay strict attention to the exact entity in the question. Do not confuse predecessor and successor states! (e.g. The capital of the Ottoman Empire after 1453 is Istanbul; Ankara was NEVER an Ottoman capital, it became the capital of modern Turkey in 1923 after the empire was abolished).
-5. SUPERLATIVES ("LAST" / "MOST RECENT"): Verify from LATEST to EARLIEST.
-6. NEGATIVES ("NOT" / "EXCEPT" / "NEVER" / "LEAST"): Find the single statement that is FALSE.
-7. REGIONAL CONTEXT: 2canplay.ng is based in Nigeria. If the question relates to African or Nigerian sports, politics, culture, history, or geography, apply Nigerian facts.
-8. EXACT MATCH: "answer" must match the exact string from the options list.
+3. QUOTATIONS, SONG LYRICS & LITERATURE:
+   - When text appears in quotes (e.g. 'hair of floating sky', 'Call me Ishmael'): this is a VERBATIM quotation from a famous song, poem, or book!
+   - Trace the exact cultural source: e.g. 'hair of floating sky' is from The Beatles' song "Julia" ("Her hair of floating sky is shimmering, glimmering...") -> answer is Julia.
+   - NEVER guess based on vague keyword associations (e.g. do NOT pick 'Luna' just because of the word 'sky')!
+4. CHRONOLOGY ("FIRST" / "EARLIEST" / "DEBUT"): When asked when something FIRST occurred, test candidate options chronologically from EARLIEST to LATEST! If an entity participated in 1986, later years like 1990 or 1994 CANNOT be the first!
+5. EXACT ENTITY & HISTORICAL ERA: Pay strict attention to the exact entity in the question. Do not confuse predecessor and successor states! (e.g. The capital of the Ottoman Empire after 1453 is Istanbul; Ankara was NEVER an Ottoman capital, it became the capital of modern Turkey in 1923 after the empire was abolished).
+6. SUPERLATIVES ("LAST" / "MOST RECENT"): Verify from LATEST to EARLIEST.
+7. NEGATIVES ("NOT" / "EXCEPT" / "NEVER" / "LEAST"): Find the single statement that is FALSE.
+8. REGIONAL CONTEXT: 2canplay.ng is based in Nigeria. If the question relates to African or Nigerian sports, politics, culture, history, or geography, apply Nigerian facts.
+9. EXACT MATCH: "answer" must match the exact string from the options list.
 
 Respond in JSON only.`;
 
@@ -322,13 +326,16 @@ CHECKLIST:
    - Identify what noun-type the question asks for (e.g. Sponsor? Stadium? Capital? Record count?).
    - ELIMINATE all options that belong to the wrong noun category!
      Example: If asked for a club's "sponsor", immediately ELIMINATE stadium names (e.g. Falmer Stadium is a stadium venue, NOT a sponsor), cities, and nicknames. Only a sponsor company (e.g. American Express) can qualify!
-2. EXACT STATISTICAL RECORDS & MILESTONES:
+2. QUOTATIONS & SONG LYRICS DETECTION:
+   - Words in quotes (e.g. 'hair of floating sky') are verbatim quotes from songs, poems, or literature!
+   - Beware of semantic distractor traps: do not pick options that merely sound related by word association (e.g. picking 'Luna' because of 'sky'). Trace the exact song or book: "Julia" by The Beatles has "hair of floating sky".
+3. EXACT STATISTICAL RECORDS & MILESTONES:
    - For world records (e.g. goalkeeper goals record = 131 goals by Rogério Ceni), eliminate conflated numbers from other players or competitions (like 140 UCL goals by Ronaldo).
-3. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
-4. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
-5. DISTRACTOR DETECTION: Beware of famous later occurrences or modern facts placed as distractors.
-6. NEGATIVES: Watch for "NOT" or "EXCEPT".
-7. EXACT MATCH: "answer" must be the exact option text.
+4. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
+5. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
+6. DISTRACTOR DETECTION: Beware of famous later occurrences or modern facts placed as distractors.
+7. NEGATIVES: Watch for "NOT" or "EXCEPT".
+8. EXACT MATCH: "answer" must be the exact option text.
 
 Respond in JSON only.`;
 
@@ -365,6 +372,7 @@ Two expert analysts disagree on the correct answer. You must determine with 100%
 
 KEY CHECKS:
 - Category check: Does the candidate answer match the requested entity type? (e.g. If asked for a 'sponsor', a stadium name like 'Falmer Stadium' is INVALID).
+- Quotations & Song Lyrics: For quoted text (e.g. 'hair of floating sky'), identify the exact song/poem/book (e.g. The Beatles' 'Julia') instead of guessing words by association.
 - Entity verification: Verify the answer matches the exact entity and era (e.g. Ottoman Empire capital = Istanbul, modern Turkey = Ankara).
 - Sports records: Verify exact official records (e.g. Rogério Ceni goalkeeper goals = 131, not 140).
 - Chronology: For 'FIRST' or 'EARLIEST', the earlier valid historical occurrence ALWAYS wins!
