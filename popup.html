@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2CanPlay AI Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <h1>🤖 2CanPlay AI Assistant</h1>
+      <p class="subtitle">AI-powered trivia helper</p>
+    </div>
+    
+    <div class="content">
+      <div class="status-section">
+        <div class="status-indicator">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="status-text" id="statusText">Checking...</span>
+        </div>
+      </div>
+      
+      <div class="toggle-section">
+        <label class="toggle">
+          <input type="checkbox" id="enabledToggle">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label">Enable Assistant</span>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Settings</h2>
+        
+        <div class="form-group">
+          <label for="apiKey">OpenAI API Key</label>
+          <input type="password" id="apiKey" placeholder="sk-...">
+          <small>Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a></small>
+        </div>
+        
+        <div class="form-group">
+          <label for="modelSelect">AI Model</label>
+          <select id="modelSelect">
+            <option value="gpt-4o">GPT-4o (Recommended - Best Balance)</option>
+            <option value="gpt-4o-mini">GPT-4o Mini (Faster, Lower Cost)</option>
+            <option value="gpt-4-turbo">GPT-4 Turbo (Highest Accuracy)</option>
+          </select>
+          <small>⚠️ Accuracy is critical - GPT-4o or better recommended</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="verificationMode">Verification Mode</label>
+          <select id="verificationMode">
+            <option value="strict">Strict (Highest Accuracy - 4-6s)</option>
+            <option value="balanced">Balanced (Good Accuracy - 2-4s)</option>
+            <option value="fast">Fast (Single Check - 1-2s)</option>
+          </select>
+          <small>Strict mode uses multi-stage verification for maximum accuracy</small>
+        </div>
+        
+        <div class="form-group">
+          <label>Display Options</label>
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" id="showConfidence">
+              Show confidence level
+            </label>
+            <label>
+              <input type="checkbox" id="showExplanation">
+              Show detailed explanation
+            </label>
+            <label>
+              <input type="checkbox" id="useVerification">
+              Enable multi-stage verification (slower but more accurate)
+            </label>
+          </div>
+        </div>
+        
+        <button class="btn-primary" id="saveSettings">Save Settings</button>
+        <div class="save-status" id="saveStatus"></div>
+      </div>
+      
+      <div class="stats-section">
+        <h2>Session Stats</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="questionsProcessed">-</div>
+            <div class="stat-label">Questions Processed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="avgResponseTime">-</div>
+            <div class="stat-label">Avg Response Time</div>
+          </div>
+        </div>
+        <button class="btn-secondary" id="viewHistory">View History</button>
+      </div>
+      
+      <div class="info-section">
+        <p class="info-text">
+          <strong>⚠️ ACCURACY MODE:</strong> This extension uses multi-stage AI verification for maximum accuracy.
+        </p>
+        <p class="info-text small">
+          <strong>Critical:</strong> One wrong answer = game over. Strict mode verifies answers through multiple AI checks before displaying.
+        </p>
+        <p class="info-text small">
+          Ensure you have an active OpenAI API key and visit 
+          <a href="https://2canplay.ng" target="_blank">2canplay.ng</a> to use.
+        </p>
+      </div>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

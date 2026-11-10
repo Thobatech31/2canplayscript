@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "2CanPlay AI Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered assistant for answering trivia questions on 2CanPlay platform",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://2canplay.ng/*",
+    "https://*.2canplay.ng/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://2canplay.ng/*", "https://*.2canplay.ng/*"],
+      "js": ["content.js"],
+      "css": ["floating-panel.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["floating-panel.css"],
+      "matches": ["https://2canplay.ng/*", "https://*.2canplay.ng/*"]
+    }
+  ]
+}
