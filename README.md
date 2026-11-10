@@ -1,6 +1,8 @@
 # 2CanPlay AI Assistant
 
-An intelligent Chrome browser extension that helps users answer trivia questions on the 2CanPlay platform using AI-powered question analysis.
+An intelligent Chrome browser extension that helps users answer trivia questions on the 2CanPlay platform using AI-powered question analysis with multi-stage verification for maximum accuracy.
+
+**Repository**: https://github.com/Thobatech31/2canplayscript
 
 ## Features
 
@@ -24,9 +26,14 @@ An intelligent Chrome browser extension that helps users answer trivia questions
 
 1. **Clone or download this repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Thobatech31/2canplayscript.git
    cd 2canplayscript
    ```
+   
+   Or download ZIP:
+   - Go to https://github.com/Thobatech31/2canplayscript
+   - Click green "Code" button → "Download ZIP"
+   - Extract the ZIP file
 
 2. **Load the extension in Chrome**
    - Open Chrome and navigate to `chrome://extensions/`

@@ -17,9 +17,9 @@ chrome.runtime.onInstalled.addListener(() => {
       chrome.storage.sync.set({
         settings: {
           enabled: true,
-          aiProvider: 'openai',
+          aiProvider: 'gemini', // gemini | openai
           apiKey: '',
-          model: 'gpt-4o', // Default to GPT-4o for better accuracy
+          model: 'gemini-pro', // Default to Gemini Pro (FREE)
           verificationMode: 'strict', // strict | balanced | fast
           useVerification: true, // Enable multi-stage verification
           minConfidenceThreshold: 0.7, // Only show answers above 70% confidence
@@ -219,7 +219,7 @@ Analyze each option systematically and identify the correct answer. Provide your
   "potential_ambiguity": "Any concerns or ambiguities"
 }`;
 
-  return await makeOpenAICall(systemPrompt, userPrompt, settings, 600);
+  return await makeAICall(systemPrompt, userPrompt, settings, 600);
 }
 
 /**
@@ -250,7 +250,7 @@ Your task: Verify this answer. Is it definitely correct? Could any other option 
   "final_assessment": "Your conclusion"
 }`;
 
-  return await makeOpenAICall(systemPrompt, userPrompt, settings, 400);
+  return await makeAICall(systemPrompt, userPrompt, settings, 400);
 }
 
 /**
@@ -272,7 +272,71 @@ Play devil's advocate: What's the strongest argument AGAINST your answer? Could 
   "revised_answer": "Only if you changed your mind"
 }`;
 
-  return await makeOpenAICall(systemPrompt, userPrompt, settings, 300);
+  return await makeAICall(systemPrompt, userPrompt, settings, 300);
+}
+
+/**
+ * Make AI API call (supports both OpenAI and Gemini)
+ */
+async function makeAICall(systemPrompt, userPrompt, settings, maxTokens = 300) {
+  if (settings.aiProvider === 'gemini') {
+    return await makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens);
+  } else {
+    return await makeOpenAICall(systemPrompt, userPrompt, settings, maxTokens);
+  }
+}
+
+/**
+ * Make Google Gemini API call
+ */
+async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 300) {
+  try {
+    const model = settings.model || 'gemini-pro';
+    const apiKey = settings.apiKey;
+    
+    // Combine system and user prompts for Gemini
+    const combinedPrompt = `${systemPrompt}\n\n${userPrompt}\n\nIMPORTANT: Respond with valid JSON only.`;
+    
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: combinedPrompt
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: maxTokens,
+          topP: 0.8,
+          topK: 10
+        }
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Gemini API request failed');
+    }
+    
+    const data = await response.json();
+    const textResponse = data.candidates[0].content.parts[0].text;
+    
+    // Extract JSON from response (Gemini sometimes wraps it in markdown)
+    const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No valid JSON found in Gemini response');
+    }
+    
+    return JSON.parse(jsonMatch[0]);
+    
+  } catch (error) {
+    console.error('[Gemini Error]', error);
+    throw new Error(`Gemini processing failed: ${error.message}`);
+  }
 }
 
 /**

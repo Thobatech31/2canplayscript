@@ -15,12 +15,17 @@ Before installing the 2CanPlay AI Assistant, ensure you have:
 
 Clone or download this repository to your local machine:
 
+**Option A: Using Git**
 ```bash
-git clone <repository-url>
+git clone https://github.com/Thobatech31/2canplayscript.git
 cd 2canplayscript
 ```
 
-Or download as ZIP and extract to a folder.
+**Option B: Download ZIP**
+1. Visit https://github.com/Thobatech31/2canplayscript
+2. Click the green **"Code"** button
+3. Click **"Download ZIP"**
+4. Extract the ZIP file to a folder on your computer
 
 ### 2. Load Extension in Chrome
 

@@ -121,36 +121,62 @@ class TwoCanPlayAssistant {
   }
   
   startMonitoring() {
-    // Use MutationObserver to detect DOM changes
+    // Use debounced MutationObserver to prevent freezing
+    let debounceTimer;
+    
     this.observer = new MutationObserver((mutations) => {
       if (!this.isEnabled || this.processingQuestion) return;
       
-      this.checkForQuestion();
+      // Debounce: wait 300ms after last mutation before checking
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        this.checkForQuestion();
+      }, 300);
     });
     
     this.observer.observe(document.body, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: false // Don't watch text changes (performance)
     });
     
-    // Also check periodically
+    // Also check periodically (less frequently)
     setInterval(() => {
       if (!this.isEnabled || this.processingQuestion) return;
       this.checkForQuestion();
-    }, 1000);
+    }, 2000); // Changed from 1s to 2s
   }
   
   checkForQuestion() {
-    const questionData = this.extractQuestionData();
-    
-    if (questionData && !this.isDuplicateQuestion(questionData)) {
-      console.log('New question detected:', questionData);
-      this.processQuestion(questionData);
+    // Use requestIdleCallback to avoid blocking the main thread
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => {
+        const questionData = this.extractQuestionData();
+        
+        if (questionData && !this.isDuplicateQuestion(questionData)) {
+          console.log('New question detected:', questionData);
+          this.processQuestion(questionData);
+        }
+      });
+    } else {
+      // Fallback for browsers without requestIdleCallback
+      setTimeout(() => {
+        const questionData = this.extractQuestionData();
+        
+        if (questionData && !this.isDuplicateQuestion(questionData)) {
+          console.log('New question detected:', questionData);
+          this.processQuestion(questionData);
+        }
+      }, 0);
     }
   }
   
   extractQuestionData() {
+    // Optimize: Only check if we're likely on a question page
+    if (!document.body.textContent.includes('?')) {
+      return null; // No question mark = probably no question
+    }
+    
     // Try multiple selectors to find question elements
     // These selectors need to be adjusted based on actual 2canplay.ng DOM structure
     

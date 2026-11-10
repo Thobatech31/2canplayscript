@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('enabledToggle').addEventListener('change', handleToggle);
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('viewHistory').addEventListener('click', viewHistory);
+  document.getElementById('aiProvider').addEventListener('change', (e) => {
+    updateProviderUI(e.target.value);
+  });
 });
 
 async function loadSettings() {
@@ -26,18 +29,59 @@ async function loadSettings() {
     
     document.getElementById('enabledToggle').checked = settings.enabled !== false;
     document.getElementById('apiKey').value = settings.apiKey || '';
-    document.getElementById('modelSelect').value = settings.model || 'gpt-4o';
+    document.getElementById('aiProvider').value = settings.aiProvider || 'gemini';
+    document.getElementById('modelSelect').value = settings.model || 'gemini-pro';
     document.getElementById('verificationMode').value = settings.verificationMode || 'strict';
     document.getElementById('showConfidence').checked = settings.showConfidence !== false;
     document.getElementById('showExplanation').checked = settings.showExplanation !== false;
     document.getElementById('useVerification').checked = settings.useVerification !== false;
+    
+    // Update UI based on provider
+    updateProviderUI(settings.aiProvider || 'gemini');
+  }
+}
+
+/**
+ * Update UI elements based on selected AI provider
+ */
+function updateProviderUI(provider) {
+  const modelSelect = document.getElementById('modelSelect');
+  const modelHelper = document.getElementById('modelHelper');
+  const apiKeyHelper = document.getElementById('apiKeyHelper');
+  const apiKeyLink = document.getElementById('apiKeyLink');
+  
+  // Clear existing options
+  modelSelect.innerHTML = '';
+  
+  if (provider === 'gemini') {
+    // Gemini models
+    modelSelect.innerHTML = `
+      <option value="gemini-pro">Gemini Pro (FREE - Recommended)</option>
+      <option value="gemini-1.5-flash">Gemini 1.5 Flash (FREE - Faster)</option>
+      <option value="gemini-1.5-pro">Gemini 1.5 Pro (FREE - Most Capable)</option>
+    `;
+    modelHelper.textContent = 'Gemini Pro is FREE with generous quota (60 requests/min)';
+    apiKeyHelper.innerHTML = 'Get your FREE API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" id="apiKeyLink">Google AI Studio</a>';
+  } else {
+    // OpenAI models
+    modelSelect.innerHTML = `
+      <option value="gpt-4o">GPT-4o (Best Balance)</option>
+      <option value="gpt-4o-mini">GPT-4o Mini (Faster, Lower Cost)</option>
+      <option value="gpt-4-turbo">GPT-4 Turbo (Highest Accuracy)</option>
+    `;
+    modelHelper.textContent = '⚠️ Accuracy is critical - GPT-4o or better recommended';
+    apiKeyHelper.innerHTML = 'Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" id="apiKeyLink">OpenAI</a> (requires payment)';
   }
 }
 
 async function saveSettings() {
+  const aiProvider = document.getElementById('aiProvider').value;
+  const apiKey = document.getElementById('apiKey').value.trim();
+  
   const settings = {
     enabled: document.getElementById('enabledToggle').checked,
-    apiKey: document.getElementById('apiKey').value.trim(),
+    aiProvider: aiProvider,
+    apiKey: apiKey,
     model: document.getElementById('modelSelect').value,
     verificationMode: document.getElementById('verificationMode').value,
     useVerification: document.getElementById('useVerification').checked,
@@ -48,19 +92,31 @@ async function saveSettings() {
   };
   
   // Validate API key
-  if (!settings.apiKey) {
+  if (!apiKey) {
     showSaveStatus('Please enter an API key', 'error');
     return;
   }
   
-  if (!settings.apiKey.startsWith('sk-')) {
-    showSaveStatus('Invalid API key format', 'error');
-    return;
+  // Validate based on provider (more flexible)
+  if (aiProvider === 'openai') {
+    if (!apiKey.startsWith('sk-')) {
+      showSaveStatus('⚠️ OpenAI API keys typically start with sk-. Double-check your key.', 'error');
+      return;
+    }
+  }
+  
+  if (aiProvider === 'gemini') {
+    // Gemini keys can start with AIza or other prefixes (more flexible)
+    if (apiKey.length < 20) {
+      showSaveStatus('⚠️ API key seems too short. Please check your key.', 'error');
+      return;
+    }
   }
   
   // Warn about verification mode
   if (settings.verificationMode === 'strict') {
-    showSaveStatus('Strict mode enabled - expect 4-6s response time but highest accuracy', 'success');
+    const providerName = aiProvider === 'gemini' ? 'Gemini (FREE!)' : 'OpenAI';
+    showSaveStatus(`Strict mode enabled with ${providerName} - expect 4-6s response time`, 'success');
   } else if (settings.verificationMode === 'fast') {
     showSaveStatus('⚠️ Fast mode: Lower accuracy. Consider Strict or Balanced for critical games.', 'success');
   }
