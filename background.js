@@ -176,31 +176,48 @@ async function strictVerificationMode(questionData, settings, startTime, deadlin
 async function runDualAnalystVerification(questionData, settings, startTime, deadlineMs, mode) {
   console.log(`[${mode.toUpperCase()}] Running Dual-Analyst Independent Verification in parallel...`);
 
-  // Launch both independent analyses in PARALLEL (takes ~1.5s total)
-  const primaryPromise = callPrimaryAnalysis(questionData, settings).catch(e => {
-    console.error('[Primary Analysis Error]', e);
-    return null;
-  });
+  let primary = null;
+  let adversary = null;
+  let lastError = null;
 
-  const adversaryPromise = callAdversarialAnalysis(questionData, settings).catch(e => {
-    console.error('[Adversary Analysis Error]', e);
-    return null;
-  });
+  // Launch both independent analyses in PARALLEL and capture results independently
+  const pPromise = callPrimaryAnalysis(questionData, settings)
+    .then(res => {
+      primary = res;
+      return res;
+    })
+    .catch(e => {
+      console.error('[Primary Analysis Error]', e);
+      lastError = e.message;
+      return null;
+    });
+
+  const aPromise = callAdversarialAnalysis(questionData, settings)
+    .then(res => {
+      adversary = res;
+      return res;
+    })
+    .catch(e => {
+      console.error('[Adversary Analysis Error]', e);
+      if (!lastError) lastError = e.message;
+      return null;
+    });
 
   const elapsed = Date.now() - startTime;
-  const remaining = deadlineMs - elapsed - 500;
-  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([null, null]), Math.min(remaining, 5500)));
+  const maxWait = Math.max(1500, deadlineMs - elapsed - 600);
 
-  const [primary, adversary] = await Promise.race([
-    Promise.all([primaryPromise, adversaryPromise]),
-    timeoutPromise
+  // Wait for both to finish OR maxWait timeout (leaves 600ms buffer for auto-click)
+  await Promise.race([
+    Promise.all([pPromise, aPromise]),
+    new Promise(resolve => setTimeout(resolve, maxWait))
   ]);
 
+  // If neither finished, show the exact error (e.g. API quota/key error) or timeout
   if (!primary && !adversary) {
-    throw new Error('Verification timed out. Check connection or API key.');
+    throw new Error(lastError ? `AI Error: ${lastError}` : 'Verification timed out. Check connection or API key.');
   }
 
-  // If one failed/timed out, return the one that succeeded
+  // If one completed and the other was slow/timed out, use the completed one immediately!
   if (!primary) return formatSingleResult(adversary, 'Adversary analysis');
   if (!adversary) return formatSingleResult(primary, 'Primary analysis');
 
@@ -280,22 +297,37 @@ CRITICAL RULES:
    - If asking for a SPONSOR: Candidate must be a company/commercial brand! NEVER select a stadium venue (e.g. Falmer Stadium), city council, or team nickname (e.g. Seagulls). A stadium is a building, NOT a sponsor!
    - If asking for a CAPITAL or CITY: Never select a country or continent.
    - If asking for an INVENTOR or PERSON: Never select an object or place.
-2. SPORTS RECORDS & STATISTICAL MILESTONES:
+2. SPORTS RECORDS, DRAFTS & MOTORSPORT:
+   - Motorsport & Formula 1: Never confuse Race Victories (Wins) with Pole Positions or Podiums!
+     Example: Sebastian Vettel recorded exactly **53 Grand Prix victories** (wins), NOT 57 (which was his career pole positions tally!). Alain Prost = 51 wins. Ayrton Senna = 41 wins.
+   - Tournament Host Cities & Finals Venues: Verify the exact official host city! Never guess the capital or biggest city (e.g. Madrid or Barcelona) just because it's famous. Example: Leinster won the 2018 European Champions Cup final against Racing 92 in **Bilbao** (San Mamés Stadium), NOT Madrid!
+   - For draft rounds and picks: Verify the exact official draft round! (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by the 49ers in 1979; Tom Brady was 6th round). Never guess late rounds (Fifth/Sixth) for 3rd-round legends!
    - For official world records (e.g. Rogério Ceni goalkeeper career goals = 131 goals): verify the exact official tally! Do NOT guess round numbers or confuse records with other competitions (e.g. Ronaldo 140 UCL goals).
-3. QUOTATIONS, SONG LYRICS & LITERATURE:
+   - UFC & MMA: Verify exact event, submission technique, and opponent (e.g. Tony Ferguson submitted Kevin Lee with a triangle choke at UFC 216).
+3. LEADERSHIP ROLES & TITLES (Founder vs President vs Chairman vs CEO):
+   - Scrutinize the exact title requested!
+   - World Economic Forum (WEF): Klaus Schwab is the Founder & Executive Chairman, but the **President** is **Børge Brende**! Never confuse the Founder with the President!
+   - Central Banks & Global Orgs: European Central Bank President = Christine Lagarde; World Bank President = Ajay Banga (formerly David Malpass); IMF Managing Director = Kristalina Georgieva.
+4. QUOTATIONS, SONG LYRICS & LITERATURE:
    - When text appears in quotes (e.g. 'hair of floating sky', 'Call me Ishmael'): this is a VERBATIM quotation from a famous song, poem, or book!
    - Trace the exact cultural source: e.g. 'hair of floating sky' is from The Beatles' song "Julia" ("Her hair of floating sky is shimmering, glimmering...") -> answer is Julia.
    - NEVER guess based on vague keyword associations (e.g. do NOT pick 'Luna' just because of the word 'sky')!
-4. "NONE OF THE ABOVE" / "ALL OF THE ABOVE" TRIVIA CONVENTION:
+5. "NONE OF THE ABOVE" / "ALL OF THE ABOVE" TRIVIA CONVENTION:
    - Avoid being over-pedantic! On 2canplay.ng, quiz questions are taken from standard trivia/school tests.
    - If a standard textbook date, person, or term is listed (e.g. British East India Company in India -> 1600), pick the intended standard option (1600)! Do NOT pick "None of the above" based on technicalities (like 1611 trading post vs 1600 charter).
    - "None of the above" is almost always a distractor trap in trivia unless all other choices are completely unrelated.
-5. CHRONOLOGY ("FIRST" / "EARLIEST" / "DEBUT"): When asked when something FIRST occurred, test candidate options chronologically from EARLIEST to LATEST! If an entity participated in 1986, later years like 1990 or 1994 CANNOT be the first!
-6. EXACT ENTITY & HISTORICAL ERA: Pay strict attention to the exact entity in the question. Do not confuse predecessor and successor states! (e.g. The capital of the Ottoman Empire after 1453 is Istanbul; Ankara was NEVER an Ottoman capital, it became the capital of modern Turkey in 1923 after the empire was abolished).
-7. SUPERLATIVES ("LAST" / "MOST RECENT"): Verify from LATEST to EARLIEST.
-8. NEGATIVES ("NOT" / "EXCEPT" / "NEVER" / "LEAST"): Find the single statement that is FALSE.
-9. REGIONAL CONTEXT: 2canplay.ng is based in Nigeria. If the question relates to African or Nigerian sports, politics, culture, history, or geography, apply Nigerian facts.
-10. EXACT MATCH: "answer" must match the exact string from the options list.
+6. CHRONOLOGY ("FIRST" / "EARLIEST" / "DEBUT"): When asked when something FIRST occurred, test candidate options chronologically from EARLIEST to LATEST! If an entity participated in 1986, later years like 1990 or 1994 CANNOT be the first!
+7. EXACT ENTITY & INCUMBENT LEADERS DURING EVENTS:
+   - When asked who was in office / leader "DURING" an event or crisis: Verify the actual INCUMBENT in office at the time of the event, NOT the successor who was elected as a consequence!
+     Example: Spanish Prime Minister during the 11 March 2004 Madrid train bombings = **José María Aznar** (NOT José Luis Rodríguez Zapatero, who was elected after). UK PM when WWII began in 1939 = Neville Chamberlain (NOT Churchill).
+   - Predecessor vs successor states: Do not confuse them (e.g. Ottoman Empire capital after 1453 is Istanbul; Ankara was NEVER an Ottoman capital, it became modern Turkey's capital in 1923).
+8. MONARCHS, ROYAL TITLES & DIPLOMACY:
+   - King vs Prince: Prince Philip (Duke of Edinburgh) was a Prince/Consort, NEVER a King!
+   - First King to visit communist China: King **Juan Carlos I** of Spain in 1978 -> Option **Juan** (NOT Philip, Charles, or Henry). Queen Elizabeth II & Prince Philip visited later in 1986.
+9. SUPERLATIVES ("LAST" / "MOST RECENT"): Verify from LATEST to EARLIEST.
+10. NEGATIVES ("NOT" / "EXCEPT" / "NEVER" / "LEAST"): Find the single statement that is FALSE.
+11. REGIONAL CONTEXT: 2canplay.ng is based in Nigeria. If the question relates to African or Nigerian sports, politics, culture, history, or geography, apply Nigerian facts.
+12. EXACT MATCH: "answer" must match the exact string from the options list.
 
 Respond in JSON only.`;
 
@@ -330,19 +362,31 @@ CHECKLIST:
    - Identify what noun-type the question asks for (e.g. Sponsor? Stadium? Capital? Record count?).
    - ELIMINATE all options that belong to the wrong noun category!
      Example: If asked for a club's "sponsor", immediately ELIMINATE stadium names (e.g. Falmer Stadium is a stadium venue, NOT a sponsor), cities, and nicknames. Only a sponsor company (e.g. American Express) can qualify!
-2. "NONE OF THE ABOVE" TRAP DETECTION:
+2. LEADERSHIP ROLE TRAPS (President vs Founder vs Chairman vs CEO):
+   - When asked for the President or CEO of an organization (e.g. World Economic Forum), beware of the famous Founder/Executive Chairman placed as a trap!
+   - Example: For WEF, Klaus Schwab is the Founder/Chairman, but **Børge Brende** is the President! Eliminate Klaus Schwab when asked for the President!
+3. ROYAL TITLES & MONARCH VISITS:
+   - King vs Prince: Prince Philip was a Prince, NOT a King!
+   - First King to visit communist China: King **Juan Carlos I** of Spain in 1978 -> Option **Juan** (NOT Philip).
+4. "NONE OF THE ABOVE" TRAP DETECTION:
    - In online trivia games, "None of the above" is almost always a false trap.
    - If a standard textbook date (e.g. 1600 for East India Company) is in the options, choose the standard textbook option instead of pedantically choosing "None of the above"!
-3. QUOTATIONS & SONG LYRICS DETECTION:
+5. QUOTATIONS & SONG LYRICS DETECTION:
    - Words in quotes (e.g. 'hair of floating sky') are verbatim quotes from songs, poems, or literature!
    - Beware of semantic distractor traps: do not pick options that merely sound related by word association (e.g. picking 'Luna' because of 'sky'). Trace the exact song or book: "Julia" by The Beatles has "hair of floating sky".
-4. EXACT STATISTICAL RECORDS & MILESTONES:
+6. EXACT STATISTICAL RECORDS, DRAFTS & MOTORSPORT:
+   - F1 & Motorsport Wins vs Poles: Never confuse Grand Prix victories/wins with pole positions! (Sebastian Vettel = 53 wins, 57 poles; Alain Prost = 51 wins; Ayrton Senna = 41 wins).
+   - Finals & Host Cities: Do not default to the biggest city/capital (Madrid/Barcelona/Paris). Example: 2018 Champions Cup final Leinster vs Racing 92 was held in **Bilbao** (San Mamés).
+   - Sports Drafts: Verify exact draft rounds (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by 49ers in 1979; Tom Brady 6th round). Do not guess late rounds (Fifth/Sixth)!
    - For world records (e.g. goalkeeper goals record = 131 goals by Rogério Ceni), eliminate conflated numbers from other players or competitions (like 140 UCL goals by Ronaldo).
-5. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
-6. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
-7. DISTRACTOR DETECTION: Beware of famous later occurrences or modern facts placed as distractors.
-8. NEGATIVES: Watch for "NOT" or "EXCEPT".
-9. EXACT MATCH: "answer" must be the exact option text.
+7. INCUMBENT LEADER TRAPS ("DURING"):
+   - For leaders "during" a crisis or historical event: Check who was IN OFFICE when it occurred, NOT who was elected afterwards!
+     Example: Spanish PM during 2004 Madrid train bombings = **José María Aznar** (NOT Zapatero).
+8. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
+9. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
+10. DISTRACTOR DETECTION: Beware of famous later occurrences or modern facts placed as distractors.
+11. NEGATIVES: Watch for "NOT" or "EXCEPT".
+12. EXACT MATCH: "answer" must be the exact option text.
 
 Respond in JSON only.`;
 
@@ -378,7 +422,13 @@ async function callTieBreaker(questionData, primary, adversary, settings) {
 Two expert analysts disagree on the correct answer. You must determine with 100% factual accuracy which analyst is right.
 
 KEY CHECKS:
+- Motorsport & F1 stats: Verify exact Grand Prix victories/wins vs pole positions (Sebastian Vettel = 53 wins, 57 poles; Alain Prost = 51 wins).
+- Monarchs & Royal titles: First King to visit communist China = King Juan Carlos I (Juan) in 1978. Prince Philip was NOT a King!
+- Incumbent leaders: For leaders 'during' an event (e.g. Madrid 2004 bombings), verify the leader in office at the time (José María Aznar), NOT the successor (Zapatero).
+- Tournament Venues & Host Cities: Verify exact host city (e.g. 2018 Champions Cup final Leinster vs Racing 92 = Bilbao, not Madrid).
+- Leadership titles: Verify the exact official title (e.g. WEF: Klaus Schwab = Founder/Chairman, but Børge Brende = President).
 - Category check: Does the candidate answer match the requested entity type? (e.g. If asked for a 'sponsor', a stadium name like 'Falmer Stadium' is INVALID).
+- Sports records & Drafts: Verify exact official records and draft rounds (e.g. Joe Montana = Third round / pick 82 in 1979, Rogério Ceni goalkeeper goals = 131, not 140).
 - "None of the above" check: Avoid picking "None of the above" on technicalities when a standard textbook/historical answer (e.g. 1600) is present.
 - Quotations & Song Lyrics: For quoted text (e.g. 'hair of floating sky'), identify the exact song/poem/book (e.g. The Beatles' 'Julia') instead of guessing words by association.
 - Entity verification: Verify the answer matches the exact entity and era (e.g. Ottoman Empire capital = Istanbul, modern Turkey = Ankara).
