@@ -631,18 +631,36 @@ class TwoCanPlayAssistant {
   
   async sendToAI(questionData) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { action: 'processQuestion', data: questionData },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else if (response?.success) {
-            resolve(response.data);
-          } else {
-            reject(new Error(response?.error || 'No response from AI service'));
+      if (!chrome.runtime?.id) {
+        reject(new Error('Extension was updated. Please refresh this page (Cmd+R / F5).'));
+        return;
+      }
+
+      try {
+        chrome.runtime.sendMessage(
+          { action: 'processQuestion', data: questionData },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              const msg = chrome.runtime.lastError.message || '';
+              if (msg.toLowerCase().includes('context invalidated')) {
+                reject(new Error('Extension reloaded. Please refresh this page!'));
+              } else {
+                reject(new Error(msg));
+              }
+            } else if (response?.success) {
+              resolve(response.data);
+            } else {
+              reject(new Error(response?.error || 'No response from AI service'));
+            }
           }
+        );
+      } catch (err) {
+        if (err.message && err.message.toLowerCase().includes('context invalidated')) {
+          reject(new Error('Extension reloaded. Please refresh this page!'));
+        } else {
+          reject(err);
         }
-      );
+      }
     });
   }
   

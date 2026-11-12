@@ -176,31 +176,48 @@ async function strictVerificationMode(questionData, settings, startTime, deadlin
 async function runDualAnalystVerification(questionData, settings, startTime, deadlineMs, mode) {
   console.log(`[${mode.toUpperCase()}] Running Dual-Analyst Independent Verification in parallel...`);
 
-  // Launch both independent analyses in PARALLEL (takes ~1.5s total)
-  const primaryPromise = callPrimaryAnalysis(questionData, settings).catch(e => {
-    console.error('[Primary Analysis Error]', e);
-    return null;
-  });
+  let primary = null;
+  let adversary = null;
+  let lastError = null;
 
-  const adversaryPromise = callAdversarialAnalysis(questionData, settings).catch(e => {
-    console.error('[Adversary Analysis Error]', e);
-    return null;
-  });
+  // Launch both independent analyses in PARALLEL and capture results independently
+  const pPromise = callPrimaryAnalysis(questionData, settings)
+    .then(res => {
+      primary = res;
+      return res;
+    })
+    .catch(e => {
+      console.error('[Primary Analysis Error]', e);
+      lastError = e.message;
+      return null;
+    });
+
+  const aPromise = callAdversarialAnalysis(questionData, settings)
+    .then(res => {
+      adversary = res;
+      return res;
+    })
+    .catch(e => {
+      console.error('[Adversary Analysis Error]', e);
+      if (!lastError) lastError = e.message;
+      return null;
+    });
 
   const elapsed = Date.now() - startTime;
-  const remaining = deadlineMs - elapsed - 500;
-  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([null, null]), Math.min(remaining, 5500)));
+  const maxWait = Math.max(1500, deadlineMs - elapsed - 600);
 
-  const [primary, adversary] = await Promise.race([
-    Promise.all([primaryPromise, adversaryPromise]),
-    timeoutPromise
+  // Wait for both to finish OR maxWait timeout (leaves 600ms buffer for auto-click)
+  await Promise.race([
+    Promise.all([pPromise, aPromise]),
+    new Promise(resolve => setTimeout(resolve, maxWait))
   ]);
 
+  // If neither finished, show the exact error (e.g. API quota/key error) or timeout
   if (!primary && !adversary) {
-    throw new Error('Verification timed out. Check connection or API key.');
+    throw new Error(lastError ? `AI Error: ${lastError}` : 'Verification timed out. Check connection or API key.');
   }
 
-  // If one failed/timed out, return the one that succeeded
+  // If one completed and the other was slow/timed out, use the completed one immediately!
   if (!primary) return formatSingleResult(adversary, 'Adversary analysis');
   if (!adversary) return formatSingleResult(primary, 'Primary analysis');
 
@@ -280,8 +297,10 @@ CRITICAL RULES:
    - If asking for a SPONSOR: Candidate must be a company/commercial brand! NEVER select a stadium venue (e.g. Falmer Stadium), city council, or team nickname (e.g. Seagulls). A stadium is a building, NOT a sponsor!
    - If asking for a CAPITAL or CITY: Never select a country or continent.
    - If asking for an INVENTOR or PERSON: Never select an object or place.
-2. SPORTS RECORDS & STATISTICAL MILESTONES:
+2. SPORTS RECORDS, DRAFTS & STATISTICAL MILESTONES:
+   - For draft rounds and picks: Verify the exact official draft round! (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by the 49ers in 1979; Tom Brady was 6th round). Never guess late rounds (Fifth/Sixth) for 3rd-round legends!
    - For official world records (e.g. Rogério Ceni goalkeeper career goals = 131 goals): verify the exact official tally! Do NOT guess round numbers or confuse records with other competitions (e.g. Ronaldo 140 UCL goals).
+   - UFC & MMA: Verify exact event, submission technique, and opponent (e.g. Tony Ferguson submitted Kevin Lee with a triangle choke at UFC 216).
 3. QUOTATIONS, SONG LYRICS & LITERATURE:
    - When text appears in quotes (e.g. 'hair of floating sky', 'Call me Ishmael'): this is a VERBATIM quotation from a famous song, poem, or book!
    - Trace the exact cultural source: e.g. 'hair of floating sky' is from The Beatles' song "Julia" ("Her hair of floating sky is shimmering, glimmering...") -> answer is Julia.
@@ -336,7 +355,8 @@ CHECKLIST:
 3. QUOTATIONS & SONG LYRICS DETECTION:
    - Words in quotes (e.g. 'hair of floating sky') are verbatim quotes from songs, poems, or literature!
    - Beware of semantic distractor traps: do not pick options that merely sound related by word association (e.g. picking 'Luna' because of 'sky'). Trace the exact song or book: "Julia" by The Beatles has "hair of floating sky".
-4. EXACT STATISTICAL RECORDS & MILESTONES:
+4. EXACT STATISTICAL RECORDS, DRAFTS & MILESTONES:
+   - Sports Drafts: Verify exact draft rounds (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by 49ers in 1979; Tom Brady 6th round). Do not guess late rounds (Fifth/Sixth)!
    - For world records (e.g. goalkeeper goals record = 131 goals by Rogério Ceni), eliminate conflated numbers from other players or competitions (like 140 UCL goals by Ronaldo).
 5. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
 6. CHRONOLOGY ("FIRST"): If the question asks when an event FIRST happened, verify the EARLIEST valid option first!
@@ -379,6 +399,7 @@ Two expert analysts disagree on the correct answer. You must determine with 100%
 
 KEY CHECKS:
 - Category check: Does the candidate answer match the requested entity type? (e.g. If asked for a 'sponsor', a stadium name like 'Falmer Stadium' is INVALID).
+- Sports records & Drafts: Verify exact official records and draft rounds (e.g. Joe Montana = Third round / pick 82 in 1979, Rogério Ceni goalkeeper goals = 131, not 140).
 - "None of the above" check: Avoid picking "None of the above" on technicalities when a standard textbook/historical answer (e.g. 1600) is present.
 - Quotations & Song Lyrics: For quoted text (e.g. 'hair of floating sky'), identify the exact song/poem/book (e.g. The Beatles' 'Julia') instead of guessing words by association.
 - Entity verification: Verify the answer matches the exact entity and era (e.g. Ottoman Empire capital = Istanbul, modern Turkey = Ankara).
