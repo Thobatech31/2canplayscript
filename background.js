@@ -297,7 +297,8 @@ CRITICAL RULES:
    - If asking for a SPONSOR: Candidate must be a company/commercial brand! NEVER select a stadium venue (e.g. Falmer Stadium), city council, or team nickname (e.g. Seagulls). A stadium is a building, NOT a sponsor!
    - If asking for a CAPITAL or CITY: Never select a country or continent.
    - If asking for an INVENTOR or PERSON: Never select an object or place.
-2. SPORTS RECORDS, DRAFTS & STATISTICAL MILESTONES:
+2. SPORTS RECORDS, DRAFTS & TOURNAMENT VENUES:
+   - Tournament Host Cities & Finals Venues: Verify the exact official host city! Never guess the capital or biggest city (e.g. Madrid or Barcelona) just because it's famous. Example: Leinster won the 2018 European Champions Cup final against Racing 92 in **Bilbao** (San Mamés Stadium), NOT Madrid!
    - For draft rounds and picks: Verify the exact official draft round! (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by the 49ers in 1979; Tom Brady was 6th round). Never guess late rounds (Fifth/Sixth) for 3rd-round legends!
    - For official world records (e.g. Rogério Ceni goalkeeper career goals = 131 goals): verify the exact official tally! Do NOT guess round numbers or confuse records with other competitions (e.g. Ronaldo 140 UCL goals).
    - UFC & MMA: Verify exact event, submission technique, and opponent (e.g. Tony Ferguson submitted Kevin Lee with a triangle choke at UFC 216).
@@ -362,7 +363,8 @@ CHECKLIST:
 4. QUOTATIONS & SONG LYRICS DETECTION:
    - Words in quotes (e.g. 'hair of floating sky') are verbatim quotes from songs, poems, or literature!
    - Beware of semantic distractor traps: do not pick options that merely sound related by word association (e.g. picking 'Luna' because of 'sky'). Trace the exact song or book: "Julia" by The Beatles has "hair of floating sky".
-5. EXACT STATISTICAL RECORDS, DRAFTS & MILESTONES:
+5. EXACT STATISTICAL RECORDS, DRAFTS & TOURNAMENT VENUES:
+   - Finals & Host Cities: Do not default to the biggest city/capital (Madrid/Barcelona/Paris). Example: 2018 Champions Cup final Leinster vs Racing 92 was held in **Bilbao** (San Mamés).
    - Sports Drafts: Verify exact draft rounds (e.g. Joe Montana was drafted in the THIRD round / 82nd overall by 49ers in 1979; Tom Brady 6th round). Do not guess late rounds (Fifth/Sixth)!
    - For world records (e.g. goalkeeper goals record = 131 goals by Rogério Ceni), eliminate conflated numbers from other players or competitions (like 140 UCL goals by Ronaldo).
 6. HISTORICAL ACCURACY & ENTITY MISCONCEPTIONS: Scrutinize the exact state/empire. (e.g. Ottoman Empire capital = Istanbul; Ankara was the capital of modern Turkey after the empire fell, NOT an Ottoman capital!).
@@ -405,6 +407,7 @@ async function callTieBreaker(questionData, primary, adversary, settings) {
 Two expert analysts disagree on the correct answer. You must determine with 100% factual accuracy which analyst is right.
 
 KEY CHECKS:
+- Tournament Venues & Host Cities: Verify exact host city (e.g. 2018 Champions Cup final Leinster vs Racing 92 = Bilbao, not Madrid).
 - Leadership titles: Verify the exact official title (e.g. WEF: Klaus Schwab = Founder/Chairman, but Børge Brende = President).
 - Category check: Does the candidate answer match the requested entity type? (e.g. If asked for a 'sponsor', a stadium name like 'Falmer Stadium' is INVALID).
 - Sports records & Drafts: Verify exact official records and draft rounds (e.g. Joe Montana = Third round / pick 82 in 1979, Rogério Ceni goalkeeper goals = 131, not 140).
