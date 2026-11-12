@@ -755,8 +755,13 @@ class TwoCanPlayAssistant {
       // Safe human-like delay (600ms) before clicking
       setTimeout(() => {
         try {
-          targetButton.click();
-          targetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          const clickableEl = targetButton.closest('button, [role="button"]') || targetButton;
+          clickableEl.focus?.();
+          clickableEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+          clickableEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+          clickableEl.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+          clickableEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+          clickableEl.click();
           console.log('[TwoCanPlay] ✅ Answer auto-clicked successfully!');
         } catch (e) {
           console.error('[TwoCanPlay] Auto-click error:', e);
