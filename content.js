@@ -12,6 +12,13 @@ class TwoCanPlayAssistant {
     this.observer = null;
     this.floatingPanel = null;
     this.processingQuestion = false;
+    this.autoClick = false;
+    this.autoPlay = false;
+    this.autoDouble = true;
+    this.usedDoubleForQuestion = null;
+    this.autoNavigating = false;
+    this.lastAutoPlayTime = 0;
+    this.stuckTimer = null;
     
     this.init();
   }
@@ -22,6 +29,8 @@ class TwoCanPlayAssistant {
     const settings = await this.getSettings();
     this.isEnabled = settings?.enabled !== false;
     this.autoClick = settings?.autoClick === true;
+    this.autoPlay = settings?.autoPlay === true;
+    this.autoDouble = settings?.autoDouble !== false;
     
     if (!this.isEnabled) {
       console.log('[TwoCanPlay] Assistant is disabled in settings');
@@ -44,6 +53,8 @@ class TwoCanPlayAssistant {
         if (request.settings) {
           this.isEnabled = request.settings.enabled !== false;
           this.autoClick = request.settings.autoClick === true;
+          this.autoPlay = request.settings.autoPlay === true;
+          this.autoDouble = request.settings.autoDouble !== false;
           this.updatePanelVisibility();
         }
         sendResponse({ success: true });
@@ -143,6 +154,9 @@ class TwoCanPlayAssistant {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         this.checkForQuestion();
+        if (this.autoPlay) {
+          this.checkAutoPlayNavigation();
+        }
       }, 100);
     });
     
@@ -156,6 +170,9 @@ class TwoCanPlayAssistant {
     setInterval(() => {
       if (!this.isEnabled) return;
       this.checkForQuestion();
+      if (this.autoPlay) {
+        this.checkAutoPlayNavigation();
+      }
     }, 400);
   }
   
@@ -484,14 +501,16 @@ class TwoCanPlayAssistant {
     const isWheelScreen = Array.from(document.querySelectorAll('button, div[role="button"], h1, h2, h3, div')).some(el => {
       if (this.isOurPanelElement(el)) return false;
       const t = el.textContent?.trim().toLowerCase();
-      return t === 'spin the wheel' || (t && t.includes('spin attempts'));
+      return t === 'spin the wheel' || t === 'spin again' || (t && t.includes('spin attempts')) || (t && t.includes('you have') && t.includes('spin'));
     });
     const hasTimer = document.querySelector('.countdown, .timer, [class*="countdown"], [class*="timer"]');
     if (isWheelScreen && !hasTimer) {
       if (this.lastProcessedQuestion !== null) {
         this.lastProcessedQuestion = null;
         this.activeQuestionId = null;
-        this.updatePanel('🎡 Ready to spin! Spin the wheel to begin.', 'idle');
+        if (!this.autoPlay) {
+          this.updatePanel('🎡 Ready to spin! Spin the wheel to begin.', 'idle');
+        }
       }
       return null;
     }
@@ -499,11 +518,11 @@ class TwoCanPlayAssistant {
     // 1. Check for Game Over or Out of Time modals
     // But ONLY block if the game card with question options is NOT simultaneously visible.
     // This prevents the "Round Ended!" state from blocking a new round's first question.
-    const gameOverModal = Array.from(document.querySelectorAll('h1, h2, h3, div')).find(el => {
+    const gameOverModal = Array.from(document.querySelectorAll('h1, h2, h3, h4, div, button')).find(el => {
       if (this.isOurPanelElement(el)) return false;
       const txt = el.textContent?.trim().toUpperCase();
       return txt === 'GAME OVER' || txt === 'OUT OF TIME!' ||
-             (txt && (txt.includes('WOULD YOU LIKE TO PLAY AGAIN') || txt.includes('WOULD YOU LIKE TO SPIN AGAIN')));
+             (txt && (txt.includes('CONGRATULATIONS') || txt.includes('VIEW LEADERBOARD') || txt.includes('WOULD YOU LIKE TO PLAY AGAIN') || txt.includes('WOULD YOU LIKE TO SPIN AGAIN')));
     });
 
     if (gameOverModal) {
@@ -608,6 +627,20 @@ class TwoCanPlayAssistant {
 
     console.log(`[TwoCanPlay] 🎯 ${qBadge} detected:`, questionData.question);
     console.log('[TwoCanPlay] Options:', questionData.options);
+    
+    // Auto-activate Double Points (x2) on Question 8, 9, 10
+    if (this.autoDouble && questionData.questionNumber >= 8 && this.usedDoubleForQuestion !== questionData.questionNumber) {
+      setTimeout(() => {
+        const doubleBtn = this.findDoublePointPowerup();
+        if (doubleBtn) {
+          console.log(`[TwoCanPlay] ✨ Auto-activating Double Points (x2) on ${qBadge}`);
+          this.usedDoubleForQuestion = questionData.questionNumber;
+          doubleBtn.style.outline = '3px solid #ecc94b';
+          doubleBtn.style.boxShadow = '0 0 15px rgba(236, 201, 75, 0.7)';
+          this.triggerClick(doubleBtn);
+        }
+      }, 150);
+    }
     
     this.updatePanel(`🔍 Analyzing ${qBadge}...`, 'processing');
     
@@ -768,25 +801,230 @@ class TwoCanPlayAssistant {
       targetButton.style.outline = '3px solid #38a169';
       targetButton.style.boxShadow = '0 0 15px rgba(56, 161, 105, 0.6)';
 
-      console.log('[TwoCanPlay] 🤖 Auto-clicking answer in 600ms:', targetButton.textContent.trim());
-
-      // Safe human-like delay (600ms) before clicking
-      setTimeout(() => {
-        try {
-          const clickableEl = targetButton.closest('button, [role="button"]') || targetButton;
-          clickableEl.focus?.();
-          clickableEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
-          clickableEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-          clickableEl.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
-          clickableEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-          clickableEl.click();
-          console.log('[TwoCanPlay] ✅ Answer auto-clicked successfully!');
-        } catch (e) {
-          console.error('[TwoCanPlay] Auto-click error:', e);
+      let clickDelay = 600;
+      if (this.autoDouble && questionData.questionNumber >= 8 && this.usedDoubleForQuestion !== questionData.questionNumber) {
+        const doubleBtn = this.findDoublePointPowerup();
+        if (doubleBtn) {
+          console.log(`[TwoCanPlay] ✨ Activating Double Points (x2) before auto-clicking on Q${questionData.questionNumber}`);
+          this.usedDoubleForQuestion = questionData.questionNumber;
+          doubleBtn.style.outline = '3px solid #ecc94b';
+          doubleBtn.style.boxShadow = '0 0 15px rgba(236, 201, 75, 0.7)';
+          this.triggerClick(doubleBtn);
+          clickDelay = 1100; // Extra time for double points multiplier animation
         }
-      }, 600);
+      }
+
+      console.log(`[TwoCanPlay] 🤖 Auto-clicking answer in ${clickDelay}ms:`, targetButton.textContent.trim());
+
+      // Safe human-like delay before clicking
+      setTimeout(() => {
+        this.triggerClick(targetButton);
+        console.log('[TwoCanPlay] ✅ Answer auto-clicked successfully!');
+      }, clickDelay);
     } else {
       console.warn('[TwoCanPlay] Could not find button to auto-click for:', result.suggestedAnswer);
+    }
+  }
+
+  findDoublePointPowerup() {
+    // 1. Direct query across clickable elements
+    const allCandidates = Array.from(document.querySelectorAll('button, div[role="button"], [class*="powerup"], [class*="booster"], [class*="boost"], [class*="item"], div, span, img'));
+    
+    for (const el of allCandidates) {
+      if (this.isOurPanelElement(el)) continue;
+
+      // Check aria-label / title
+      const aria = (el.getAttribute('aria-label') || el.getAttribute('title') || '').toLowerCase();
+      if (aria.includes('double') || aria.includes('x2') || aria.includes('2x')) {
+        const clickable = el.closest('button, [role="button"]') || el;
+        if (this.isPowerupAvailable(clickable)) return clickable;
+      }
+
+      // Check img alt or src
+      if (el.tagName === 'IMG') {
+        const src = (el.src || '').toLowerCase();
+        const alt = (el.alt || '').toLowerCase();
+        if (src.includes('double') || src.includes('x2') || alt.includes('double') || alt.includes('x2')) {
+          const clickable = el.closest('button, [role="button"]') || el.parentElement || el;
+          if (this.isPowerupAvailable(clickable)) return clickable;
+        }
+      }
+
+      // Check class name
+      const className = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+      if (className.includes('double') || className.includes('x2')) {
+        const clickable = el.closest('button, [role="button"]') || el;
+        if (this.isPowerupAvailable(clickable)) return clickable;
+      }
+
+      // Check text content on leaf elements
+      if (el.children.length <= 1) {
+        const txt = el.textContent?.trim().toLowerCase();
+        if (txt === 'x2' || txt === '2x' || txt === 'double' || txt === 'double point' || txt === 'double points' || txt.includes('double x2')) {
+          const clickable = el.closest('button, [role="button"]') || el.parentElement || el;
+          if (this.isPowerupAvailable(clickable)) return clickable;
+        }
+      }
+    }
+
+    // 2. Row/container fallback: locate the 4-item powerup row and pick the double-point item
+    const rows = Array.from(document.querySelectorAll('[class*="powerup"], [class*="power-up"], [class*="boost"], [class*="booster"], [class*="lifeline"]'));
+    for (const row of rows) {
+      if (this.isOurPanelElement(row)) continue;
+      const items = Array.from(row.children);
+      for (const item of items) {
+        const t = (item.textContent || '').toLowerCase();
+        const hasImg = item.querySelector('img[src*="double" i], img[src*="x2" i], img[alt*="double" i]');
+        if (t.includes('x2') || t.includes('double') || hasImg) {
+          if (this.isPowerupAvailable(item)) return item;
+        }
+      }
+      // In 2canplay, the 4th item in the powerup row is Double Point
+      if (items.length === 4) {
+        const fourthItem = items[3];
+        if (this.isPowerupAvailable(fourthItem)) return fourthItem;
+      }
+    }
+
+    return null;
+  }
+
+  isPowerupAvailable(el) {
+    if (!el || !this.isElementVisible(el)) return false;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+
+    // Check computed opacity
+    const style = window.getComputedStyle(el);
+    if (parseFloat(style.opacity) < 0.5) return false;
+
+    // Check count badge (e.g. badge showing 0)
+    const badge = el.querySelector('span, div, [class*="badge"], [class*="count"]');
+    if (badge && badge.textContent?.trim() === '0') return false;
+
+    return true;
+  }
+
+  triggerClick(element) {
+    if (!element) return;
+    try {
+      const clickableEl = element.closest('button, [role="button"]') || element;
+      clickableEl.focus?.();
+      clickableEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+      clickableEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      clickableEl.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+      clickableEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      clickableEl.click();
+    } catch (e) {
+      console.error('[TwoCanPlay] Click error:', e);
+      try { element.click?.(); } catch (_) {}
+    }
+  }
+
+  isElementVisible(el) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).display !== 'none' && window.getComputedStyle(el).visibility !== 'hidden';
+  }
+
+  checkAutoPlayNavigation() {
+    if (!this.autoPlay || this.autoNavigating || this.processingQuestion) return;
+
+    // Never navigate if an active trivia question with options is on screen
+    const gameContainer = this.getGameContainer();
+    const activeOptions = gameContainer ? this.extractOptions(gameContainer) : [];
+    if (activeOptions && activeOptions.length >= 2) {
+      return; // Question is currently active
+    }
+
+    const now = Date.now();
+    // Throttle navigation actions to prevent double clicks
+    if (now - this.lastAutoPlayTime < 2200) return;
+
+    const allButtons = Array.from(document.querySelectorAll('button, div[role="button"], a[role="button"]'));
+
+    // --- STEP 1: Home / Dashboard Screen -> Click "Spin the wheel" ---
+    const spinWheelBtn = allButtons.find(btn => {
+      if (this.isOurPanelElement(btn)) return false;
+      const text = btn.textContent?.trim().toLowerCase();
+      return text === 'spin the wheel' || text === 'go for a spin';
+    });
+
+    if (spinWheelBtn && this.isElementVisible(spinWheelBtn)) {
+      this.autoNavigating = true;
+      this.lastAutoPlayTime = now;
+      this.updatePanel('🎡 <strong>Auto-Play:</strong> Spinning wheel in 1.5s...', 'loading');
+      spinWheelBtn.style.outline = '3px solid #805ad5';
+
+      setTimeout(() => {
+        console.log('[TwoCanPlay] 🔄 Auto-Play: Clicking "Spin the wheel"');
+        this.triggerClick(spinWheelBtn);
+        setTimeout(() => {
+          this.autoNavigating = false;
+        }, 2000);
+      }, 1500);
+      return;
+    }
+
+    // --- STEP 2: Wheel / Category Landed Screen -> Click "Play" ---
+    const playBtn = allButtons.find(btn => {
+      if (this.isOurPanelElement(btn)) return false;
+      const text = btn.textContent?.trim().toLowerCase();
+      return text === 'play';
+    });
+
+    if (playBtn && this.isElementVisible(playBtn)) {
+      // Confirm this is the wheel/category screen and NOT a question option
+      const hasWheelContext = Array.from(document.querySelectorAll('span, div, p, h1, h2, h3')).some(el => {
+        if (this.isOurPanelElement(el)) return false;
+        const t = el.textContent?.trim().toLowerCase();
+        return t && (t.includes('category:') || t.includes('you have') || t.includes('spin again') || t.includes('go for a spin') || t.includes('spins'));
+      });
+
+      if (hasWheelContext) {
+        this.autoNavigating = true;
+        this.lastAutoPlayTime = now;
+        this.updatePanel('🎮 <strong>Auto-Play:</strong> Starting round in 1.5s...', 'loading');
+        playBtn.style.outline = '3px solid #805ad5';
+
+        setTimeout(() => {
+          console.log('[TwoCanPlay] 🔄 Auto-Play: Clicking "Play"');
+          this.triggerClick(playBtn);
+          setTimeout(() => {
+            this.autoNavigating = false;
+          }, 2000);
+        }, 1500);
+        return;
+      }
+    }
+
+    // --- STEP 3: Round Finished / Congratulations / Game Over / Out of Time -> Refresh page to spin & play again ---
+    const isSessionEnded = Array.from(document.querySelectorAll('h1, h2, h3, h4, div, p, button')).some(el => {
+      if (this.isOurPanelElement(el)) return false;
+      const t = el.textContent?.trim().toLowerCase();
+      return t && (
+        t === 'congratulations!' ||
+        t.includes('congratulations') ||
+        t.includes('view leaderboard') ||
+        t === 'game over' ||
+        t.includes('out of time') ||
+        t.includes('round ended') ||
+        t.includes('play again') ||
+        t.includes('spin again') ||
+        t.includes('would you like to play again') ||
+        t.includes('would you like to spin again')
+      );
+    });
+
+    if (isSessionEnded) {
+      this.autoNavigating = true;
+      this.lastAutoPlayTime = now;
+      this.updatePanel('🏁 <strong>Auto-Play:</strong> Round complete! Refreshing in 2.5s for next spin...', 'loading');
+
+      setTimeout(() => {
+        console.log('[TwoCanPlay] 🔄 Auto-Play: Round ended. Refreshing page to start next spin and game...');
+        window.location.reload();
+      }, 2500);
+      return;
     }
   }
 

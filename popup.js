@@ -46,6 +46,8 @@ async function loadSettings() {
     document.getElementById('showExplanation').checked = settings.showExplanation !== false;
     document.getElementById('useVerification').checked = settings.useVerification !== false;
     document.getElementById('autoClick').checked = settings.autoClick === true;
+    document.getElementById('autoPlay').checked = settings.autoPlay === true;
+    document.getElementById('autoDouble').checked = settings.autoDouble !== false;
   }
 }
 
@@ -97,6 +99,8 @@ async function saveSettings() {
     showConfidence: document.getElementById('showConfidence').checked,
     showExplanation: document.getElementById('showExplanation').checked,
     autoClick: document.getElementById('autoClick').checked,
+    autoPlay: document.getElementById('autoPlay').checked,
+    autoDouble: document.getElementById('autoDouble').checked,
     panelPosition: 'top-right',
     timeout: 8000
   };
