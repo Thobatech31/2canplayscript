@@ -64,11 +64,12 @@ function updateProviderUI(provider) {
   if (provider === 'gemini') {
     // Gemini models
     modelSelect.innerHTML = `
-      <option value="gemini-pro">Gemini Pro (FREE - Recommended)</option>
-      <option value="gemini-1.5-flash">Gemini 1.5 Flash (FREE - Faster)</option>
+      <option value="gemini-1.5-flash">Gemini 1.5 Flash (FREE - Fast & Recommended)</option>
       <option value="gemini-1.5-pro">Gemini 1.5 Pro (FREE - Most Capable)</option>
+      <option value="gemini-2.0-flash">Gemini 2.0 Flash (FREE - Next-Gen)</option>
+      <option value="gemini-pro">Gemini 1.0 Pro (Legacy)</option>
     `;
-    modelHelper.textContent = 'Gemini Pro is FREE with generous quota (60 requests/min)';
+    modelHelper.textContent = 'Gemini 1.5 Flash is 100% FREE with instant sub-second response times!';
     apiKeyHelper.innerHTML = 'Get your FREE API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" id="apiKeyLink">Google AI Studio</a>';
   } else {
     // OpenAI models
