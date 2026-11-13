@@ -413,10 +413,10 @@ Identify the single correct option after eliminating traps. Respond in JSON:
 async function callTieBreaker(questionData, primary, adversary, settings) {
   const { question, options, category } = questionData;
   
-  // Use GPT-4o for referee tie-breaking if provider is OpenAI
+  // Use flagship model for referee tie-breaking (GPT-4o for OpenAI, Gemini 1.5 Pro for Gemini)
   const refereeSettings = settings.aiProvider === 'openai' 
     ? { ...settings, model: 'gpt-4o' } 
-    : settings;
+    : (settings.aiProvider === 'gemini' ? { ...settings, model: 'gemini-1.5-pro' } : settings);
 
   const systemPrompt = `You are the supreme trivia referee on 2canplay.ng.
 Two expert analysts disagree on the correct answer. You must determine with 100% factual accuracy which analyst is right.
@@ -558,6 +558,68 @@ async function makeAICall(systemPrompt, userPrompt, settings, maxTokens = 300) {
   }
 }
 
+let resolvedGeminiModel = null;
+let lastModelCheckTime = 0;
+
+/**
+ * Dynamically discovers the active Gemini model supported by the user's API key
+ */
+async function getAvailableGeminiModel(apiKey, preferredModel) {
+  // Use cached model if resolved within the last 15 minutes
+  if (resolvedGeminiModel && (Date.now() - lastModelCheckTime < 900000)) {
+    return resolvedGeminiModel;
+  }
+
+  try {
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, {
+      headers: {
+        'x-goog-api-key': apiKey
+      }
+    });
+    if (listRes.ok) {
+      const listData = await listRes.json();
+      const availableModels = (listData.models || [])
+        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+        .map(m => m.name.replace(/^models\//, ''));
+
+      console.log('[TwoCanPlay] Discovered Gemini Models for this key:', availableModels);
+
+      // 1. Exact match requested by user
+      if (preferredModel && availableModels.includes(preferredModel)) {
+        resolvedGeminiModel = preferredModel;
+        lastModelCheckTime = Date.now();
+        return resolvedGeminiModel;
+      }
+
+      // 2. If user wanted Pro
+      const wantsPro = preferredModel && preferredModel.includes('pro');
+      const candidate = wantsPro
+        ? availableModels.find(m => m.includes('3.8-pro') || m.includes('2.5-pro') || m.includes('2.0-pro') || m.includes('1.5-pro') || m === 'gemini-pro')
+        : availableModels.find(m => m.includes('3.8-flash') || m.includes('2.5-flash') || m.includes('2.0-flash') || m.includes('1.5-flash') || m === 'gemini-flash');
+
+      if (candidate) {
+        resolvedGeminiModel = candidate;
+        lastModelCheckTime = Date.now();
+        console.log(`[TwoCanPlay] Auto-selected active Gemini model: ${resolvedGeminiModel}`);
+        return resolvedGeminiModel;
+      }
+
+      // 3. Fallback to any active flash or generateContent model
+      const fallback = availableModels.find(m => m.includes('3.8-flash')) || availableModels.find(m => m.includes('flash')) || availableModels[0];
+      if (fallback) {
+        resolvedGeminiModel = fallback;
+        lastModelCheckTime = Date.now();
+        return resolvedGeminiModel;
+      }
+    }
+  } catch (e) {
+    console.warn('[TwoCanPlay] Error discovering Gemini models:', e);
+  }
+
+  // Safe fallback default
+  return preferredModel || 'gemini-3.8-flash';
+}
+
 /**
  * Make Google Gemini API call
  */
@@ -566,43 +628,83 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
   const timeoutId = setTimeout(() => controller.abort(), 6500);
 
   try {
-    const model = settings.model || 'gemini-1.5-flash';
     const apiKey = settings.apiKey;
+    const model = await getAvailableGeminiModel(apiKey, settings.model || 'gemini-1.5-flash');
     
     // Combine system and user prompts for Gemini
     const combinedPrompt = `${systemPrompt}\n\n${userPrompt}\n\nIMPORTANT: Respond with valid JSON only.`;
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: combinedPrompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: maxTokens,
-          topP: 0.8,
-          topK: 10
-        }
-      })
+    const bodyPayload = JSON.stringify({
+      contents: [{
+        parts: [{
+          text: combinedPrompt
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: maxTokens,
+        responseMimeType: 'application/json'
+      }
     });
+
+    // Try endpoints with the verified active model
+    const endpoints = [
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model.replace(/-latest$/, '')}:generateContent?key=${apiKey}`
+    ];
+
+    let response = null;
+    let lastErrorMsg = '';
+
+    for (const url of endpoints) {
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: bodyPayload
+        });
+
+        if (response.ok) {
+          break;
+        }
+
+        // If it's not a 404 (e.g. invalid key 400 or quota 429), abort endpoint rotation and throw
+        if (response.status !== 404) {
+          const errorData = await response.json();
+          throw new Error(errorData.error?.message || `Gemini API error: ${response.status}`);
+        }
+
+        const errorData = await response.json();
+        lastErrorMsg = errorData.error?.message || `404 Not Found`;
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+        if (err.message && !err.message.includes('404') && !err.message.includes('not found')) {
+          throw err;
+        }
+        lastErrorMsg = err.message;
+      }
+    }
+
     clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || 'Gemini API request failed');
+
+    if (!response || !response.ok) {
+      // Invalidate cached model on 404 so next attempt rediscovers
+      resolvedGeminiModel = null;
+      throw new Error(lastErrorMsg || `Gemini model ${model} not available.`);
     }
     
     const data = await response.json();
-    const textResponse = data.candidates[0].content.parts[0].text;
+    const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!textResponse) {
+      throw new Error('Empty response received from Gemini');
+    }
     
-    // Extract JSON from response (Gemini sometimes wraps it in markdown)
+    // Extract JSON from response
     const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('No valid JSON found in Gemini response');
@@ -614,7 +716,7 @@ async function makeGeminiCall(systemPrompt, userPrompt, settings, maxTokens = 30
     clearTimeout(timeoutId);
     console.error('[Gemini Error]', error);
     if (error.name === 'AbortError') {
-      throw new Error('AI request timed out after 6.5s. Try a faster model like Gemini Flash or GPT-4o Mini.');
+      throw new Error('AI request timed out after 6.5s. Try Gemini 1.5 Flash.');
     }
     throw new Error(`Gemini processing failed: ${error.message}`);
   }
