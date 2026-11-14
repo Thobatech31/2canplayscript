@@ -26,6 +26,8 @@ chrome.runtime.onInstalled.addListener(() => {
           showConfidence: true,
           showExplanation: true,
           autoClick: false,
+          autoPlay: false,
+          autoDouble: true,
           panelPosition: 'top-right',
           timeout: 8000 // Longer timeout for verification
         }
